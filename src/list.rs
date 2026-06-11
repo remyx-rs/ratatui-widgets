@@ -196,6 +196,18 @@ impl<'a> List<'a> {
         }
     }
 
+    pub fn block_as_ref(&self) -> Option<&Block<'_>> {
+        self.block.as_ref()
+    }
+
+    pub fn items_as_slice(&self) -> &[ListItem<'_>] {
+        self.items.as_slice()
+    }
+
+    pub fn direction_owned(&self) -> ListDirection {
+        self.direction
+    }
+
     /// Set the items
     ///
     /// The `items` parameter accepts any value that can be converted into an iterator of
