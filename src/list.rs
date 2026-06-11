@@ -222,12 +222,12 @@ impl<'a, Message> List<'a, Message> {
         self.items.as_slice()
     }
 
-    pub fn direction_ref(&self) -> &ListDirection {
-        &self.direction
+    pub fn direction_ref(&self) -> ListDirection {
+        self.direction
     }
 
-    pub fn on_select_as_ref(&self) -> Option<&fn(&ListItem<'a>) -> Message> {
-        self.on_select.as_ref()
+    pub fn on_select_ref(&self) -> Option<fn(&ListItem<'a>) -> Message> {
+        self.on_select
     }
 
     pub fn on_select(mut self, f: fn(&ListItem<'a>) -> Message) -> Self {
