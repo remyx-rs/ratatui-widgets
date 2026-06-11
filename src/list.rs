@@ -214,11 +214,11 @@ impl<'a, Message> List<'a, Message> {
         }
     }
 
-    pub fn block_as_ref(&self) -> Option<&Block<'_>> {
+    pub fn block_as_ref(&self) -> Option<&Block<'a>> {
         self.block.as_ref()
     }
 
-    pub fn items_as_slice(&self) -> &[ListItem<'_>] {
+    pub fn items_as_slice(&self) -> &[ListItem<'a>] {
         self.items.as_slice()
     }
 
@@ -230,7 +230,7 @@ impl<'a, Message> List<'a, Message> {
         self.on_select
     }
 
-    pub fn on_select(mut self, f: fn(&ListItem<'a>) -> Message) -> Self {
+    pub fn on_select(mut self, f: for<'b> fn(&'b ListItem<'a>) -> Message) -> Self {
         self.on_select = Some(f);
         self
     }
