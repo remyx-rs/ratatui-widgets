@@ -226,6 +226,10 @@ impl<'a, Message> List<'a, Message> {
         &self.direction
     }
 
+    pub fn on_select_as_ref(&self) -> Option<&fn(&ListItem<'a>) -> Message> {
+        self.on_select.as_ref()
+    }
+
     pub fn on_select(mut self, f: fn(&ListItem<'a>) -> Message) -> Self {
         self.on_select = Some(f);
         self
