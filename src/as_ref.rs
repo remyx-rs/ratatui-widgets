@@ -62,7 +62,7 @@ impl_as_ref!(crate::chart::Chart<'a>, <'a>);
 impl_as_ref!(crate::clear::Clear);
 impl_as_ref!(crate::gauge::Gauge<'a>, <'a>);
 impl_as_ref!(crate::gauge::LineGauge<'a>, <'a>);
-impl_as_ref!(crate::list::List<'a>, <'a>);
+impl_as_ref!(crate::list::List<'a, Message>, <'a, Message>);
 impl_as_ref!(crate::logo::RatatuiLogo);
 impl_as_ref!(crate::mascot::RatatuiMascot);
 impl_as_ref!(crate::paragraph::Paragraph<'a>, <'a>);
@@ -89,7 +89,7 @@ mod tests {
         let _ = crate::clear::Clear.as_ref();
         let _ = crate::gauge::Gauge::default().as_ref();
         let _ = crate::gauge::LineGauge::default().as_ref();
-        let _ = crate::list::List::new(["foo"]).as_ref();
+        let _ = crate::list::List::<()>::new(["foo"]).as_ref();
         let _ = crate::logo::RatatuiLogo::default().as_ref();
         let _ = crate::mascot::RatatuiMascot::default().as_ref();
         let _ = crate::paragraph::Paragraph::new("").as_ref();

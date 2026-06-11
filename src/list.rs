@@ -105,8 +105,8 @@ mod state;
 /// [`Text::alignment`]: ratatui_core::text::Text::alignment
 /// [`StatefulWidget`]: ratatui_core::widgets::StatefulWidget
 /// [`Widget`]: ratatui_core::widgets::Widget
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
-pub struct List<'a> {
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct List<'a, Message> {
     /// An optional block to wrap the widget in
     pub(crate) block: Option<Block<'a>>,
     /// The items in the list
@@ -125,6 +125,24 @@ pub struct List<'a> {
     pub(crate) highlight_spacing: HighlightSpacing,
     /// How many items to try to keep visible before and after the selected item
     pub(crate) scroll_padding: usize,
+    pub(crate) on_select: Option<fn(&ListItem<'a>) -> Message>,
+}
+
+impl<'a, Message> Default for List<'a, Message> {
+    fn default() -> Self {
+        Self {
+            block: Default::default(),
+            items: Default::default(),
+            style: Default::default(),
+            direction: Default::default(),
+            highlight_style: Default::default(),
+            highlight_symbol: Default::default(),
+            repeat_highlight_symbol: Default::default(),
+            highlight_spacing: Default::default(),
+            scroll_padding: Default::default(),
+            on_select: Default::default(),
+        }
+    }
 }
 
 /// Defines the direction in which the list will be rendered.
@@ -142,7 +160,7 @@ pub enum ListDirection {
     BottomToTop,
 }
 
-impl<'a> List<'a> {
+impl<'a, Message> List<'a, Message> {
     /// Creates a new list from [`ListItem`]s
     ///
     /// The `items` parameter accepts any value that can be converted into an iterator of
@@ -204,8 +222,13 @@ impl<'a> List<'a> {
         self.items.as_slice()
     }
 
-    pub fn direction_owned(&self) -> ListDirection {
-        self.direction
+    pub fn direction_ref(&self) -> &ListDirection {
+        &self.direction
+    }
+
+    pub fn on_select(mut self, f: fn(&ListItem<'a>) -> Message) -> Self {
+        self.on_select = Some(f);
+        self
     }
 
     /// Set the items
@@ -440,7 +463,7 @@ impl<'a> List<'a> {
     }
 }
 
-impl Styled for List<'_> {
+impl<Message> Styled for List<'_, Message> {
     type Item = Self;
 
     fn style(&self) -> Style {
@@ -464,7 +487,7 @@ impl Styled for ListItem<'_> {
     }
 }
 
-impl<'a, Item> FromIterator<Item> for List<'a>
+impl<'a, Item, Message> FromIterator<Item> for List<'a, Message>
 where
     Item: Into<ListItem<'a>>,
 {
@@ -488,15 +511,15 @@ mod tests {
 
     #[test]
     fn collect_list_from_iterator() {
-        let collected: List = (0..3).map(|i| format!("Item{i}")).collect();
-        let expected = List::new(["Item0", "Item1", "Item2"]);
+        let collected: List<()> = (0..3).map(|i| format!("Item{i}")).collect();
+        let expected: List<()> = List::new(["Item0", "Item1", "Item2"]);
         assert_eq!(collected, expected);
     }
 
     #[test]
     fn can_be_stylized() {
         assert_eq!(
-            List::new::<Vec<&str>>(vec![])
+            List::<()>::new::<Vec<&str>>(vec![])
                 .black()
                 .on_white()
                 .bold()
