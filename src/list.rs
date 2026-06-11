@@ -125,7 +125,7 @@ pub struct List<'a, Message> {
     pub(crate) highlight_spacing: HighlightSpacing,
     /// How many items to try to keep visible before and after the selected item
     pub(crate) scroll_padding: usize,
-    pub(crate) on_select: Option<fn(&ListItem<'a>) -> Message>,
+    pub(crate) on_select: Option<for<'b> fn(&'b ListItem<'a>) -> Message>,
 }
 
 impl<'a, Message> Default for List<'a, Message> {
@@ -226,7 +226,7 @@ impl<'a, Message> List<'a, Message> {
         self.direction
     }
 
-    pub fn on_select_ref(&self) -> Option<fn(&ListItem<'a>) -> Message> {
+    pub fn on_select_ref(&self) -> Option<for<'b> fn(&'b ListItem<'a>) -> Message> {
         self.on_select
     }
 
