@@ -128,6 +128,7 @@ where
     pub(crate) highlight_spacing: HighlightSpacing,
     /// How many items to try to keep visible before and after the selected item
     pub(crate) scroll_padding: usize,
+    /// Callback invoked when an item is selected
     pub(crate) on_select: Option<fn(&Item) -> Message>,
 }
 
@@ -219,22 +220,27 @@ where
         }
     }
 
+    /// Returns a reference to the optional [`Block`] wrapping the list.
     pub fn block_as_ref(&self) -> Option<&Block<'a>> {
         self.block.as_ref()
     }
 
+    /// Returns the list items as a slice.
     pub fn items_as_slice(&self) -> &[Item] {
         self.items.as_slice()
     }
 
+    /// Returns the current [`ListDirection`].
     pub fn direction_ref(&self) -> ListDirection {
         self.direction
     }
 
+    /// Returns the current `on_select` callback, if set.
     pub fn on_select_ref(&self) -> Option<fn(&Item) -> Message> {
         self.on_select
     }
 
+    /// Sets a callback to be invoked when an item is selected.
     pub fn on_select(mut self, f: fn(&Item) -> Message) -> Self {
         self.on_select = Some(f);
         self
