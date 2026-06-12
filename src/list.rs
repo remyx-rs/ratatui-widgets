@@ -106,11 +106,14 @@ mod state;
 /// [`StatefulWidget`]: ratatui_core::widgets::StatefulWidget
 /// [`Widget`]: ratatui_core::widgets::Widget
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct List<'a, Message> {
+pub struct List<'a, Item, Message = ()>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     /// An optional block to wrap the widget in
     pub(crate) block: Option<Block<'a>>,
     /// The items in the list
-    pub(crate) items: Vec<ListItem<'a>>,
+    pub(crate) items: Vec<Item>,
     /// Style used as a base style for the widget
     pub(crate) style: Style,
     /// List display direction
@@ -125,10 +128,13 @@ pub struct List<'a, Message> {
     pub(crate) highlight_spacing: HighlightSpacing,
     /// How many items to try to keep visible before and after the selected item
     pub(crate) scroll_padding: usize,
-    pub(crate) on_select: Option<for<'b> fn(&'b ListItem<'a>) -> Message>,
+    pub(crate) on_select: Option<fn(&Item) -> Message>,
 }
 
-impl<'a, Message> Default for List<'a, Message> {
+impl<'a, Item, Message> Default for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     fn default() -> Self {
         Self {
             block: Default::default(),
@@ -160,7 +166,10 @@ pub enum ListDirection {
     BottomToTop,
 }
 
-impl<'a, Message> List<'a, Message> {
+impl<'a, Item, Message> List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     /// Creates a new list from [`ListItem`]s
     ///
     /// The `items` parameter accepts any value that can be converted into an iterator of
@@ -200,15 +209,11 @@ impl<'a, Message> List<'a, Message> {
     /// ```
     ///
     /// [`Text`]: ratatui_core::text::Text
-    pub fn new<T>(items: T) -> Self
-    where
-        T: IntoIterator,
-        T::Item: Into<ListItem<'a>>,
-    {
+    pub fn new(items: impl Into<Vec<Item>>) -> Self {
         Self {
             block: None,
             style: Style::default(),
-            items: items.into_iter().map(Into::into).collect(),
+            items: items.into(),
             direction: ListDirection::default(),
             ..Self::default()
         }
@@ -218,7 +223,7 @@ impl<'a, Message> List<'a, Message> {
         self.block.as_ref()
     }
 
-    pub fn items_as_slice(&self) -> &[ListItem<'a>] {
+    pub fn items_as_slice(&self) -> &[Item] {
         self.items.as_slice()
     }
 
@@ -226,11 +231,11 @@ impl<'a, Message> List<'a, Message> {
         self.direction
     }
 
-    pub fn on_select_ref(&self) -> Option<for<'b> fn(&'b ListItem<'a>) -> Message> {
+    pub fn on_select_ref(&self) -> Option<fn(&Item) -> Message> {
         self.on_select
     }
 
-    pub fn on_select(mut self, f: for<'b> fn(&'b ListItem<'a>) -> Message) -> Self {
+    pub fn on_select(mut self, f: fn(&Item) -> Message) -> Self {
         self.on_select = Some(f);
         self
     }
@@ -252,12 +257,8 @@ impl<'a, Message> List<'a, Message> {
     ///
     /// [`Text`]: ratatui_core::text::Text
     #[must_use = "method moves the value of self and returns the modified value"]
-    pub fn items<T>(mut self, items: T) -> Self
-    where
-        T: IntoIterator,
-        T::Item: Into<ListItem<'a>>,
-    {
-        self.items = items.into_iter().map(Into::into).collect();
+    pub fn items(mut self, items: impl Into<Vec<Item>>) -> Self {
+        self.items = items.into();
         self
     }
 
@@ -467,7 +468,10 @@ impl<'a, Message> List<'a, Message> {
     }
 }
 
-impl<Message> Styled for List<'_, Message> {
+impl<'a, Item, Message> Styled for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     type Item = Self;
 
     fn style(&self) -> Style {
@@ -491,17 +495,18 @@ impl Styled for ListItem<'_> {
     }
 }
 
-impl<'a, Item, Message> FromIterator<Item> for List<'a, Message>
+impl<'a, Item, Message> FromIterator<Item> for List<'a, Item, Message>
 where
-    Item: Into<ListItem<'a>>,
+    Item: Clone + Into<ListItem<'a>>,
 {
     fn from_iter<Iter: IntoIterator<Item = Item>>(iter: Iter) -> Self {
-        Self::new(iter)
+        Self::new(iter.into_iter().collect::<Vec<_>>())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloc::string::{String, ToString};
     use alloc::{format, vec};
 
     use pretty_assertions::assert_eq;
@@ -515,15 +520,19 @@ mod tests {
 
     #[test]
     fn collect_list_from_iterator() {
-        let collected: List<()> = (0..3).map(|i| format!("Item{i}")).collect();
-        let expected: List<()> = List::new(["Item0", "Item1", "Item2"]);
+        let collected: List<'_, String> = (0..3).map(|i| format!("Item{i}")).collect();
+        let expected: List<'_, String> = List::new(vec![
+            "Item0".to_string(),
+            "Item1".to_string(),
+            "Item2".to_string(),
+        ]);
         assert_eq!(collected, expected);
     }
 
     #[test]
     fn can_be_stylized() {
         assert_eq!(
-            List::<()>::new::<Vec<&str>>(vec![])
+            List::<&str>::new(vec![])
                 .black()
                 .on_white()
                 .bold()
@@ -540,7 +549,7 @@ mod tests {
     #[test]
     fn no_style() {
         let text = Text::from("Item 1");
-        let list = List::new([ListItem::new(text)])
+        let list = List::<_>::new([ListItem::new(text)])
             .highlight_symbol(">>")
             .highlight_spacing(HighlightSpacing::Always);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
@@ -553,7 +562,7 @@ mod tests {
     #[test]
     fn styled_text() {
         let text = Text::from("Item 1").bold();
-        let list = List::new([ListItem::new(text)])
+        let list = List::<_>::new([ListItem::new(text)])
             .highlight_symbol(">>")
             .highlight_spacing(HighlightSpacing::Always);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
@@ -572,7 +581,7 @@ mod tests {
         // note this avoids using the `Stylize' methods as that gets then combines the style
         // instead of setting it directly (which is not the same for some implementations)
         let item = ListItem::new(text).style(Modifier::ITALIC);
-        let list = List::new([item])
+        let list = List::<_>::new([item])
             .highlight_symbol(">>")
             .highlight_spacing(HighlightSpacing::Always);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
@@ -591,7 +600,7 @@ mod tests {
         // note this avoids using the `Stylize' methods as that gets then combines the style
         // instead of setting it directly (which is not the same for some implementations)
         let item = ListItem::new(text).style(Modifier::ITALIC);
-        let list = List::new([item])
+        let list = List::<_>::new([item])
             .highlight_symbol(">>")
             .highlight_spacing(HighlightSpacing::Always);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
@@ -611,7 +620,7 @@ mod tests {
         // instead of setting it directly (which is not the same for some implementations)
         let item = ListItem::new(text).style(Modifier::ITALIC);
         let mut state = ListState::default().with_selected(Some(0));
-        let list = List::new([item])
+        let list = List::<_>::new([item])
             .highlight_symbol(">>")
             .highlight_style(Color::Red);
 
@@ -639,7 +648,7 @@ mod tests {
             ListItem::new(Text::styled("Item 5", bold)).style(italic), // same but highlighted
         ];
         let mut state = ListState::default().with_selected(Some(4));
-        let list = List::new(items)
+        let list = List::<_>::new(items)
             .highlight_symbol(">>")
             .highlight_style(Color::Red)
             .style(Style::new().on_blue());
@@ -674,7 +683,7 @@ mod tests {
             ListItem::new("Item 2"),
             ListItem::new("Item 3"),
         ];
-        let list = List::new(items);
+        let list = List::<_>::new(items);
         // This should not panic, even if the buffer is too small to render the list.
         list.render(buffer.area, &mut buffer, &mut state);
         assert_eq!(buffer, Buffer::with_lines(["I"]));
@@ -689,7 +698,7 @@ mod tests {
             ListItem::new("Item 2"),
             ListItem::new("Item 3"),
         ];
-        let list = List::new(items);
+        let list = List::<_>::new(items);
         // This should not panic, even if the buffer has zero size.
         list.render(buffer.area, &mut buffer, &mut state);
     }

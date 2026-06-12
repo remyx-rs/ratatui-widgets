@@ -29,7 +29,7 @@ fn block_backed_widgets_keep_auto_traits() {
     assert_auto_traits::<Chart<'static>>();
     assert_auto_traits::<BarChart<'static>>();
     assert_auto_traits::<Canvas<'static, fn(&mut Context)>>();
-    assert_auto_traits::<List<'static>>();
+    assert_auto_traits::<List<'static, &str>>();
     assert_auto_traits::<Monthly<'static, CalendarEventStore>>();
     assert_auto_traits::<Gauge<'static>>();
     assert_auto_traits::<Tabs<'static>>();
