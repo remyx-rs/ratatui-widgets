@@ -1,11 +1,11 @@
 [package]
-name = "ratatui-widgets"
-version = "0.3.1"
+name = "remyx-widgets"
+version = "0.3.1-remyx.1"
 description = "A collection of Ratatui widgets for building terminal user interfaces using Ratatui."
-documentation = "https://docs.rs/ratatui-widgets"
+documentation = "https://docs.rs/remyx-widgets"
 readme = "README.md"
-authors = ["Florian Dehau", "The Ratatui Developers"]
-repository = "https://github.com/YOUR_USER/Ratatui-widgets"
+authors = ["Florian Dehau", "The Ratatui Developers", "Manuel Garcia de la Vega"]
+repository = "https://github.com/remyx-rs/ratatui-widgets"
 homepage = "https://ratatui.rs"
 keywords = ["dashboard", "terminal", "tui"]
 categories = ["command-line-interface"]
