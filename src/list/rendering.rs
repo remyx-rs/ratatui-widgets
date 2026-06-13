@@ -81,14 +81,13 @@ where
 
         let mut current_height = 0;
         let selection_spacing = self.highlight_spacing.should_add(state.selected.is_some());
-        for (i, item) in self
-            .items
+        for (i, list_item) in self
+            .list_items
             .iter()
             .enumerate()
             .skip(state.offset)
             .take(last_visible_index - first_visible_index)
         {
-            let list_item: ListItem = item.clone().into();
             let (x, y) = if self.direction == ListDirection::BottomToTop {
                 current_height += list_item.height() as u16;
                 (list_area.left(), list_area.bottom() - current_height)
@@ -142,8 +141,7 @@ where
     Item: Clone + Into<ListItem<'a>>,
 {
     fn item_height(&self, index: usize) -> usize {
-        let list_item: ListItem = self.items[index].clone().into();
-        list_item.height()
+        self.list_items[index].height()
     }
 
     /// Given an offset, calculate which items can fit in a given area
@@ -164,8 +162,7 @@ where
 
         // Calculate the last visible index and total height of the items
         // that will fit in the available space
-        for item in self.items.iter().skip(offset) {
-            let list_item: ListItem = item.clone().into();
+        for list_item in self.list_items.iter().skip(offset) {
             if height_from_offset + list_item.height() > max_height {
                 break;
             }

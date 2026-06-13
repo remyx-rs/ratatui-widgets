@@ -114,6 +114,8 @@ where
     pub(crate) block: Option<Block<'a>>,
     /// The items in the list
     pub(crate) items: Vec<Item>,
+    /// List items for rendering
+    pub(crate) list_items: Vec<ListItem<'a>>,
     /// Style used as a base style for the widget
     pub(crate) style: Style,
     /// List display direction
@@ -140,6 +142,7 @@ where
         Self {
             block: Default::default(),
             items: Default::default(),
+            list_items: Default::default(),
             style: Default::default(),
             direction: Default::default(),
             highlight_style: Default::default(),
@@ -211,10 +214,13 @@ where
     ///
     /// [`Text`]: ratatui_core::text::Text
     pub fn new(items: impl Into<Vec<Item>>) -> Self {
+        let items = items.into();
+        let list_items = items.iter().cloned().map(Item::into).collect();
         Self {
             block: None,
             style: Style::default(),
-            items: items.into(),
+            items,
+            list_items,
             direction: ListDirection::default(),
             ..Self::default()
         }
@@ -265,6 +271,7 @@ where
     #[must_use = "method moves the value of self and returns the modified value"]
     pub fn items(mut self, items: impl Into<Vec<Item>>) -> Self {
         self.items = items.into();
+        self.list_items = self.items.iter().cloned().map(Item::into).collect();
         self
     }
 
@@ -506,7 +513,8 @@ where
     Item: Clone + Into<ListItem<'a>>,
 {
     fn from_iter<Iter: IntoIterator<Item = Item>>(iter: Iter) -> Self {
-        Self::new(iter.into_iter().collect::<Vec<_>>())
+        let items: Vec<Item> = iter.into_iter().collect();
+        Self::new(items)
     }
 }
 
