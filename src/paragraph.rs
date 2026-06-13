@@ -400,8 +400,21 @@ impl ParagraphState {
             offset: Position::ORIGIN,
         }
     }
-    pub fn update(&mut self, x: u16, y: u16) {
-        self.offset = Position { x, y };
+
+    pub fn incr_offset_y(&mut self) {
+        let y = self.offset.y.saturating_add_signed(1);
+        self.offset = Position {
+            x: self.offset.x,
+            y,
+        };
+    }
+
+    pub fn decr_offset_y(&mut self) {
+        let y = self.offset.y.saturating_sub_signed(1);
+        self.offset = Position {
+            x: self.offset.x,
+            y,
+        };
     }
 }
 
