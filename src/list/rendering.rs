@@ -4,22 +4,31 @@ use ratatui_core::text::{Line, ToLine};
 use ratatui_core::widgets::{StatefulWidget, Widget};
 
 use crate::block::BlockExt;
-use crate::list::{List, ListDirection, ListState};
+use crate::list::{List, ListDirection, ListItem, ListState};
 
-impl Widget for List<'_> {
+impl<'a, Item, Message> Widget for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     fn render(self, area: Rect, buf: &mut Buffer) {
         Widget::render(&self, area, buf);
     }
 }
 
-impl Widget for &List<'_> {
+impl<'a, Item, Message> Widget for &List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = ListState::default();
         StatefulWidget::render(self, area, buf, &mut state);
     }
 }
 
-impl StatefulWidget for List<'_> {
+impl<'a, Item, Message> StatefulWidget for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     type State = ListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -27,7 +36,10 @@ impl StatefulWidget for List<'_> {
     }
 }
 
-impl StatefulWidget for &List<'_> {
+impl<'a, Item, Message> StatefulWidget for &List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
     type State = ListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -69,25 +81,25 @@ impl StatefulWidget for &List<'_> {
 
         let mut current_height = 0;
         let selection_spacing = self.highlight_spacing.should_add(state.selected.is_some());
-        for (i, item) in self
-            .items
+        for (i, list_item) in self
+            .list_items
             .iter()
             .enumerate()
             .skip(state.offset)
             .take(last_visible_index - first_visible_index)
         {
             let (x, y) = if self.direction == ListDirection::BottomToTop {
-                current_height += item.height() as u16;
+                current_height += list_item.height() as u16;
                 (list_area.left(), list_area.bottom() - current_height)
             } else {
                 let pos = (list_area.left(), list_area.top() + current_height);
-                current_height += item.height() as u16;
+                current_height += list_item.height() as u16;
                 pos
             };
 
-            let row_area = Rect::new(x, y, list_area.width, item.height() as u16);
+            let row_area = Rect::new(x, y, list_area.width, list_item.height() as u16);
 
-            let item_style = self.style.patch(item.style);
+            let item_style = self.style.patch(list_item.style);
             buf.set_style(row_area, item_style);
 
             let is_selected = state.selected == Some(i);
@@ -101,13 +113,13 @@ impl StatefulWidget for &List<'_> {
             } else {
                 row_area
             };
-            Widget::render(&item.content, item_area, buf);
+            Widget::render(&list_item.content, item_area, buf);
 
             if is_selected {
                 buf.set_style(row_area, self.highlight_style);
             }
             if selection_spacing {
-                for j in 0..item.content.height() {
+                for j in 0..list_item.content.height() {
                     // if the item is selected, we need to display the highlight symbol:
                     // - either for the first line of the item only,
                     // - or for each line of the item if the appropriate option is set
@@ -124,7 +136,14 @@ impl StatefulWidget for &List<'_> {
     }
 }
 
-impl List<'_> {
+impl<'a, Item, Message> List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
+    fn item_height(&self, index: usize) -> usize {
+        self.list_items[index].height()
+    }
+
     /// Given an offset, calculate which items can fit in a given area
     fn get_items_bounds(
         &self,
@@ -143,12 +162,12 @@ impl List<'_> {
 
         // Calculate the last visible index and total height of the items
         // that will fit in the available space
-        for item in self.items.iter().skip(offset) {
-            if height_from_offset + item.height() > max_height {
+        for list_item in self.list_items.iter().skip(offset) {
+            if height_from_offset + list_item.height() > max_height {
                 break;
             }
 
-            height_from_offset += item.height();
+            height_from_offset += list_item.height();
 
             last_visible_index += 1;
         }
@@ -171,7 +190,7 @@ impl List<'_> {
         // the offset is still set), we still need to show this item
         while index_to_display >= last_visible_index {
             height_from_offset =
-                height_from_offset.saturating_add(self.items[last_visible_index].height());
+                height_from_offset.saturating_add(self.item_height(last_visible_index));
 
             last_visible_index += 1;
 
@@ -179,7 +198,7 @@ impl List<'_> {
             // for the selected/offset item
             while height_from_offset > max_height {
                 height_from_offset =
-                    height_from_offset.saturating_sub(self.items[first_visible_index].height());
+                    height_from_offset.saturating_sub(self.item_height(first_visible_index));
 
                 // Remove this item to view by starting at the next item index
                 first_visible_index += 1;
@@ -192,14 +211,14 @@ impl List<'_> {
             first_visible_index -= 1;
 
             height_from_offset =
-                height_from_offset.saturating_add(self.items[first_visible_index].height());
+                height_from_offset.saturating_add(self.item_height(first_visible_index));
 
             // Don't show an item if it is beyond our viewable height
             while height_from_offset > max_height {
                 last_visible_index -= 1;
 
                 height_from_offset =
-                    height_from_offset.saturating_sub(self.items[last_visible_index].height());
+                    height_from_offset.saturating_sub(self.item_height(last_visible_index));
             }
         }
 
@@ -232,7 +251,7 @@ impl List<'_> {
                     .saturating_add(scroll_padding)
                     .min(last_valid_index)
             {
-                height_around_selected += self.items[index].height();
+                height_around_selected += self.item_height(index);
             }
             if height_around_selected <= max_height {
                 break;
@@ -281,7 +300,7 @@ mod tests {
         let mut state = ListState::default();
 
         let items: Vec<ListItem> = Vec::new();
-        let list = List::new(items);
+        let list = List::<_>::new(items);
         state.select_first();
         StatefulWidget::render(list, single_line_buf.area, &mut single_line_buf, &mut state);
         assert_eq!(state.selected, None);
@@ -292,7 +311,7 @@ mod tests {
         let mut state = ListState::default();
 
         let items = vec![ListItem::new("Item 1")];
-        let list = List::new(items);
+        let list = List::<_>::new(items);
         state.select_first();
         StatefulWidget::render(
             &list,
@@ -331,14 +350,23 @@ mod tests {
     }
 
     /// helper method to render a widget to an empty buffer with the default state
-    fn widget(widget: List<'_>, width: u16, height: u16) -> Buffer {
+    fn widget<'a, Item: Clone + Into<ListItem<'a>>>(
+        widget: List<'a, Item>,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
         Widget::render(widget, buffer.area, &mut buffer);
         buffer
     }
 
     /// helper method to render a widget to an empty buffer with a given state
-    fn stateful_widget(widget: List<'_>, state: &mut ListState, width: u16, height: u16) -> Buffer {
+    fn stateful_widget<'a, Item: Clone + Into<ListItem<'a>>>(
+        widget: List<'a, Item>,
+        state: &mut ListState,
+        width: u16,
+        height: u16,
+    ) -> Buffer {
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
         StatefulWidget::render(widget, buffer.area, &mut buffer, state);
         buffer
@@ -347,7 +375,7 @@ mod tests {
     #[test]
     fn does_not_render_in_small_space() {
         let items = vec!["Item 0", "Item 1", "Item 2"];
-        let list = List::new(items.clone()).highlight_symbol(">>");
+        let list = List::<_>::new(items.clone()).highlight_symbol(">>");
         let mut buffer = Buffer::empty(Rect::new(0, 0, 15, 3));
 
         // attempt to render into an area of the buffer with 0 width
@@ -358,7 +386,7 @@ mod tests {
         Widget::render(list.clone(), Rect::new(0, 0, 15, 0), &mut buffer);
         assert_eq!(&buffer, &Buffer::empty(buffer.area));
 
-        let list = List::new(items)
+        let list = List::<_>::new(items)
             .highlight_symbol(">>")
             .block(Block::bordered());
         // attempt to render into an area of the buffer with zero height after
@@ -382,7 +410,7 @@ mod tests {
             Lines: IntoIterator,
             Lines::Item: Into<Line<'line>>,
         {
-            let list = List::new(items.to_owned()).highlight_symbol(">>");
+            let list = List::<_>::new(items.to_owned()).highlight_symbol(">>");
             let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 5));
             Widget::render(list, buffer.area, &mut buffer);
             assert_eq!(buffer, Buffer::with_lines(expected));
@@ -397,7 +425,7 @@ mod tests {
             Lines: IntoIterator,
             Lines::Item: Into<Line<'line>>,
         {
-            let list = List::new(items.to_owned()).highlight_symbol(">>");
+            let list = List::<_>::new(items.to_owned()).highlight_symbol(">>");
             let mut state = ListState::default().with_selected(selected);
             let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 5));
             StatefulWidget::render(list, buffer.area, &mut buffer, &mut state);
@@ -946,7 +974,7 @@ mod tests {
     #[test]
     fn can_be_stylized() {
         assert_eq!(
-            List::new::<Vec<&str>>(vec![])
+            List::<&str>::new(vec![])
                 .black()
                 .on_white()
                 .bold()
@@ -1029,7 +1057,7 @@ mod tests {
 
     #[test]
     fn alignment_zero_area_width() {
-        let list = List::new([Line::from("Text").alignment(Alignment::Left)]);
+        let list = List::<_>::new([Line::from("Text").alignment(Alignment::Left)]);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 4, 1));
         Widget::render(list, Rect::new(0, 0, 4, 0), &mut buffer);
         assert_eq!(buffer, Buffer::with_lines(["    "]));
@@ -1160,7 +1188,7 @@ mod tests {
         *state.offset_mut() = offset;
         state.select(selected);
 
-        let list = List::new(["Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5"])
+        let list = List::<_>::new(["Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5"])
             .scroll_padding(padding)
             .highlight_symbol(">> ");
         StatefulWidget::render(list, buffer.area, &mut buffer, &mut state);
@@ -1181,7 +1209,9 @@ mod tests {
         let items = [
             "Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6", "Item 7",
         ];
-        let list = List::new(items).scroll_padding(3).highlight_symbol(">> ");
+        let list = List::<_>::new(items)
+            .scroll_padding(3)
+            .highlight_symbol(">> ");
 
         StatefulWidget::render(&list, buffer.area, &mut buffer, &mut state);
 
@@ -1206,7 +1236,9 @@ mod tests {
             ListItem::new("Item 4\nTest\nTest"),
             ListItem::new("Item 5"),
         ];
-        let list = List::new(items).scroll_padding(1).highlight_symbol(">> ");
+        let list = List::<_>::new(items)
+            .scroll_padding(1)
+            .highlight_symbol(">> ");
 
         StatefulWidget::render(list, buffer.area, &mut buffer, &mut state);
 
@@ -1235,7 +1267,9 @@ mod tests {
             ListItem::new("Item 2"),
             ListItem::new("Item 3"),
         ];
-        let list = List::new(items).scroll_padding(2).highlight_symbol(">> ");
+        let list = List::<_>::new(items)
+            .scroll_padding(2)
+            .highlight_symbol(">> ");
 
         StatefulWidget::render(list, buffer.area, &mut buffer, &mut state);
         #[rustfmt::skip]
@@ -1263,7 +1297,7 @@ mod tests {
         #[case] expected: &str,
         mut single_line_buf: Buffer,
     ) {
-        let list = List::new([item]).highlight_symbol(highlight_symbol);
+        let list = List::<_>::new([item]).highlight_symbol(highlight_symbol);
         let mut state = ListState::default();
         state.select(Some(0));
         StatefulWidget::render(list, single_line_buf.area, &mut single_line_buf, &mut state);
