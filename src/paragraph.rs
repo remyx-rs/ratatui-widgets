@@ -394,6 +394,17 @@ pub struct ParagraphState {
     offset: Position,
 }
 
+impl ParagraphState {
+    pub fn new() -> Self {
+        Self {
+            offset: Position::ORIGIN,
+        }
+    }
+    pub fn update(&mut self, x: u16, y: u16) {
+        self.offset = Position { x, y };
+    }
+}
+
 impl StatefulWidget for Paragraph<'_> {
     type State = ParagraphState;
 
