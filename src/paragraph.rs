@@ -390,31 +390,36 @@ impl Widget for &Paragraph<'_> {
     }
 }
 
+#[derive(Default)]
 pub struct ParagraphState {
     offset: Position,
 }
 
+pub enum Axe {
+    X,
+    Y,
+}
+
 impl ParagraphState {
-    pub fn new() -> Self {
-        Self {
-            offset: Position::ORIGIN,
+    pub fn offset_add(&mut self, axe: Axe, qty: i16) {
+        match axe {
+            Axe::X => {
+                // Line Width + Offset <= Max Line width
+                let x = self.offset.x.saturating_add_signed(qty);
+                self.offset = Position {
+                    x,
+                    y: self.offset.y,
+                };
+            }
+            Axe::Y => {
+                // Line count Screen + Offset <= Total lines
+                let y = self.offset.y.saturating_add_signed(qty);
+                self.offset = Position {
+                    x: self.offset.x,
+                    y,
+                };
+            }
         }
-    }
-
-    pub fn incr_offset_y(&mut self) {
-        let y = self.offset.y.saturating_add_signed(1);
-        self.offset = Position {
-            x: self.offset.x,
-            y,
-        };
-    }
-
-    pub fn decr_offset_y(&mut self) {
-        let y = self.offset.y.saturating_sub_signed(1);
-        self.offset = Position {
-            x: self.offset.x,
-            y,
-        };
     }
 }
 
