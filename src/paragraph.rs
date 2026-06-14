@@ -400,9 +400,13 @@ impl ParagraphState {
         self.limits.is_some()
     }
     pub fn limits(&mut self, limits: Position) {
-        self.limits = Some(limits);
-        self.offset_add(Axe::X, 0);
-        self.offset_add(Axe::Y, 0);
+        if limits.x == 0 && limits.y == 0 {
+            self.limits = None;
+        } else {
+            self.limits = Some(limits);
+            self.offset_add(Axe::X, 0);
+            self.offset_add(Axe::Y, 0);
+        }
     }
 
     pub fn offset_add(&mut self, axe: Axe, qty: i16) {
@@ -411,7 +415,7 @@ impl ParagraphState {
                 // Line Width + Offset <= Max Line width
                 let x = self
                     .limits
-                    .unwrap_or(Position::MAX)
+                    .unwrap_or(Position::MIN)
                     .x
                     .min(self.offset.x.saturating_add_signed(qty));
                 self.offset = Position {
@@ -423,7 +427,7 @@ impl ParagraphState {
                 // Line count Screen + Offset <= Total lines
                 let y = self
                     .limits
-                    .unwrap_or(Position::MAX)
+                    .unwrap_or(Position::MIN)
                     .y
                     .min(self.offset.y.saturating_add_signed(qty));
                 self.offset = Position {
