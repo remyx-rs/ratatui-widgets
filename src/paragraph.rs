@@ -4,6 +4,7 @@ use ratatui_core::buffer::{Buffer, CellWidth};
 use ratatui_core::layout::{Alignment, Position, Rect};
 use ratatui_core::style::{Style, Styled};
 use ratatui_core::text::{Line, StyledGrapheme, Text};
+use ratatui_core::widgets::StatefulWidget;
 use ratatui_core::widgets::Widget;
 
 use crate::block::{Block, BlockExt};
@@ -82,8 +83,6 @@ pub struct Paragraph<'a> {
     wrap: Option<Wrap>,
     /// The text to display
     text: Text<'a>,
-    /// Scroll
-    scroll: Position,
     /// Alignment of the text
     alignment: Alignment,
 }
@@ -124,9 +123,6 @@ pub struct Wrap {
     pub trim: bool,
 }
 
-type Horizontal = u16;
-type Vertical = u16;
-
 impl<'a> Paragraph<'a> {
     /// Creates a new [`Paragraph`] widget with the given text.
     ///
@@ -157,7 +153,6 @@ impl<'a> Paragraph<'a> {
             style: Style::default(),
             wrap: None,
             text,
-            scroll: Position::ORIGIN,
             alignment,
         }
     }
@@ -215,26 +210,6 @@ impl<'a> Paragraph<'a> {
     #[must_use = "method moves the value of self and returns the modified value"]
     pub const fn wrap(mut self, wrap: Wrap) -> Self {
         self.wrap = Some(wrap);
-        self
-    }
-
-    /// Set the scroll offset for the given paragraph
-    ///
-    /// The scroll offset is a tuple of (y, x) offset. The y offset is the number of lines to
-    /// scroll, and the x offset is the number of characters to scroll. The scroll offset is applied
-    /// after the text is wrapped and aligned.
-    ///
-    /// Note: the order of the tuple is (y, x) instead of (x, y), which is different from general
-    /// convention across the crate.
-    ///
-    /// For more information about future scrolling design and concerns, see [RFC: Design of
-    /// Scrollable Widgets](https://github.com/ratatui/ratatui/discussions/1924) on GitHub.
-    #[must_use = "method moves the value of self and returns the modified value"]
-    pub const fn scroll(mut self, offset: (Vertical, Horizontal)) -> Self {
-        self.scroll = Position {
-            x: offset.1,
-            y: offset.0,
-        };
         self
     }
 
@@ -325,10 +300,6 @@ impl<'a> Paragraph<'a> {
     /// assert_eq!(paragraph.line_count(20), 1);
     /// assert_eq!(paragraph.line_count(10), 2);
     /// ```
-    #[instability::unstable(
-        feature = "rendered-line-info",
-        issue = "https://github.com/ratatui/ratatui/issues/293"
-    )]
     pub fn line_count(&self, width: u16) -> usize {
         if width < 1 {
             return 0;
@@ -381,10 +352,6 @@ impl<'a> Paragraph<'a> {
     /// let paragraph = Paragraph::new("Hello World\nhi\nHello World!!!");
     /// assert_eq!(paragraph.line_width(), 14);
     /// ```
-    #[instability::unstable(
-        feature = "rendered-line-info",
-        issue = "https://github.com/ratatui/ratatui/issues/293"
-    )]
     pub fn line_width(&self) -> usize {
         let width = self.text.iter().map(Line::width).max().unwrap_or_default();
         let (left, right) = self
@@ -396,6 +363,16 @@ impl<'a> Paragraph<'a> {
         width
             .saturating_add(left as usize)
             .saturating_add(right as usize)
+    }
+
+    /// Returns the number of lines in the text.
+    pub fn len(&self) -> usize {
+        self.text.height()
+    }
+
+    /// Returns `true` if the paragraph contains no lines.
+    pub fn is_empty(&self) -> bool {
+        self.text.height() == 0
     }
 }
 
@@ -411,12 +388,115 @@ impl Widget for &Paragraph<'_> {
         buf.set_style(area, self.style);
         self.block.as_ref().render(area, buf);
         let inner = self.block.inner_if_some(area);
-        self.render_paragraph(inner, buf);
+        self.render_paragraph(inner, Position::ORIGIN, buf);
+    }
+}
+
+/// State for the [`Paragraph`] widget when used as a [`StatefulWidget`].
+///
+/// Tracks the current scroll offset and content limits.
+#[derive(Default)]
+pub struct ParagraphState {
+    offset: Position,
+    limits: Option<Position>,
+    length: usize,
+}
+
+/// The axis along which to scroll the paragraph.
+pub enum Axe {
+    /// Horizontal axis.
+    X,
+    /// Vertical axis.
+    Y,
+}
+
+impl ParagraphState {
+    /// Creates a new [`ParagraphState`] with the given content length.
+    pub fn new(length: usize) -> Self {
+        Self {
+            length,
+            ..Default::default()
+        }
+    }
+
+    /// Returns the total number of lines in the content.
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Returns `true` if the content has no lines.
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    /// Returns whether scroll limits have been set.
+    pub fn limits_set(&self) -> bool {
+        self.limits.is_some()
+    }
+    /// Sets the maximum scroll limits for both axes.
+    pub fn limits(&mut self, limits: Position) {
+        if limits.x == 0 && limits.y == 0 {
+            self.limits = None;
+        } else {
+            self.limits = Some(limits);
+            self.offset_add(Axe::X, 0);
+            self.offset_add(Axe::Y, 0);
+        }
+    }
+
+    /// Adjusts the scroll offset along the given [`Axe`] by `qty`, clamped to the limits.
+    pub fn offset_add(&mut self, axe: Axe, qty: i16) {
+        match axe {
+            Axe::X => {
+                // Line Width + Offset <= Max Line width
+                let x = self
+                    .limits
+                    .unwrap_or(Position::MIN)
+                    .x
+                    .min(self.offset.x.saturating_add_signed(qty));
+                self.offset = Position {
+                    x,
+                    y: self.offset.y,
+                };
+            }
+            Axe::Y => {
+                // Line count Screen + Offset <= Total lines
+                let y = self
+                    .limits
+                    .unwrap_or(Position::MIN)
+                    .y
+                    .min(self.offset.y.saturating_add_signed(qty));
+                self.offset = Position {
+                    x: self.offset.x,
+                    y,
+                };
+            }
+        }
+    }
+}
+
+impl StatefulWidget for Paragraph<'_> {
+    type State = ParagraphState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        StatefulWidget::render(&self, area, buf, state);
+    }
+}
+
+impl StatefulWidget for &Paragraph<'_> {
+    type State = ParagraphState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let area = area.intersection(buf.area);
+        buf.set_style(area, self.style);
+        self.block.as_ref().render(area, buf);
+        let inner = self.block.inner_if_some(area);
+        self.render_paragraph(inner, state.offset, buf);
     }
 }
 
 impl Paragraph<'_> {
-    fn render_paragraph(&self, text_area: Rect, buf: &mut Buffer) {
+    fn render_paragraph(&self, text_area: Rect, offset: Position, buf: &mut Buffer) {
         if text_area.is_empty() {
             return;
         }
@@ -431,7 +511,7 @@ impl Paragraph<'_> {
         if let Some(Wrap { trim }) = self.wrap {
             let mut line_composer = WordWrapper::new(styled, text_area.width, trim);
             // compute the lines iteratively until we reach the desired scroll offset.
-            for _ in 0..self.scroll.y {
+            for _ in 0..offset.y {
                 if line_composer.next_line().is_none() {
                     return;
                 }
@@ -439,9 +519,9 @@ impl Paragraph<'_> {
             render_lines(line_composer, text_area, buf);
         } else {
             // avoid unnecessary work by skipping directly to the relevant line before rendering
-            let lines = styled.skip(self.scroll.y as usize);
+            let lines = styled.skip(offset.y as usize);
             let mut line_composer = LineTruncator::new(lines, text_area.width);
-            line_composer.set_horizontal_offset(self.scroll.x);
+            line_composer.set_horizontal_offset(offset.x);
             render_lines(line_composer, text_area, buf);
         }
     }
@@ -515,7 +595,7 @@ mod tests {
     #[track_caller]
     fn test_case(paragraph: &Paragraph, expected: &Buffer) {
         let mut buffer = Buffer::empty(Rect::new(0, 0, expected.area.width, expected.area.height));
-        paragraph.render(buffer.area, &mut buffer);
+        Widget::render(paragraph, buffer.area, &mut buffer);
         assert_eq!(buffer, *expected);
     }
 
@@ -807,10 +887,6 @@ mod tests {
             &truncated_paragraph,
             &Buffer::with_lines(["This is a long line of "]),
         );
-        test_case(
-            &truncated_paragraph.clone().scroll((0, 2)),
-            &Buffer::with_lines(["is is a long line of te"]),
-        );
     }
 
     #[test]
@@ -885,31 +961,6 @@ mod tests {
     }
 
     #[test]
-    fn test_render_paragraph_with_scroll_offset() {
-        let text = "This is a\ncool\nmultiline\nparagraph.";
-        let truncated_paragraph = Paragraph::new(text).scroll((2, 0));
-        let wrapped_paragraph = truncated_paragraph.clone().wrap(Wrap { trim: false });
-        let trimmed_paragraph = truncated_paragraph.clone().wrap(Wrap { trim: true });
-
-        for paragraph in [&truncated_paragraph, &wrapped_paragraph, &trimmed_paragraph] {
-            test_case(
-                paragraph,
-                &Buffer::with_lines(["multiline   ", "paragraph.  ", "            "]),
-            );
-            test_case(paragraph, &Buffer::with_lines(["multiline   "]));
-        }
-
-        test_case(
-            &truncated_paragraph.clone().scroll((2, 4)),
-            &Buffer::with_lines(["iline   ", "graph.  "]),
-        );
-        test_case(
-            &wrapped_paragraph,
-            &Buffer::with_lines(["cool   ", "multili", "ne     "]),
-        );
-    }
-
-    #[test]
     fn test_render_paragraph_with_zero_width_area() {
         let text = "Hello, world!";
         let area = Rect::new(0, 0, 0, 3);
@@ -920,7 +971,6 @@ mod tests {
             Paragraph::new(text).wrap(Wrap { trim: true }),
         ] {
             test_case(&paragraph, &Buffer::empty(area));
-            test_case(&paragraph.clone().scroll((2, 4)), &Buffer::empty(area));
         }
     }
 
@@ -935,7 +985,6 @@ mod tests {
             Paragraph::new(text).wrap(Wrap { trim: true }),
         ] {
             test_case(&paragraph, &Buffer::empty(area));
-            test_case(&paragraph.clone().scroll((2, 4)), &Buffer::empty(area));
         }
     }
 
@@ -996,7 +1045,7 @@ mod tests {
         let paragraph = Paragraph::new(text).style(Style::default().bg(Color::Green));
 
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
-        paragraph.render(Rect::new(0, 0, 10, 1), &mut buffer);
+        Widget::render(paragraph, Rect::new(0, 0, 10, 1), &mut buffer);
 
         // If all cells have green background, the test passes
         for x in 0..10 {
@@ -1015,7 +1064,7 @@ mod tests {
         let paragraph = Paragraph::new(text).style(Style::default().bg(Color::Green));
 
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
-        paragraph.render(Rect::new(0, 0, 10, 1), &mut buffer);
+        Widget::render(paragraph, Rect::new(0, 0, 10, 1), &mut buffer);
 
         // Check content and effective cell widths for wide cells.
         assert_eq!(buffer[(0, 0)].symbol(), "あ", "Cell 0 should be あ");
@@ -1044,7 +1093,7 @@ mod tests {
         let paragraph = Paragraph::new(text).style(Style::default().bg(Color::Green));
 
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 1));
-        paragraph.render(Rect::new(0, 0, 10, 1), &mut buffer);
+        Widget::render(paragraph, Rect::new(0, 0, 10, 1), &mut buffer);
 
         // Check content and effective cell widths for wide grapheme clusters.
         assert_eq!(buffer[(0, 0)].symbol(), "ｶﾞ", "Cell 0 should be ｶﾞ");
@@ -1284,7 +1333,7 @@ mod tests {
         let paragraph = Paragraph::new(text).block(Block::bordered());
 
         let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
-        paragraph.render(Rect::new(0, 0, 20, 3), &mut buf);
+        Widget::render(paragraph, Rect::new(0, 0, 20, 3), &mut buf);
 
         let mut expected = Buffer::with_lines([
             "┌──────────────────┐",
@@ -1301,14 +1350,18 @@ mod tests {
     #[case::bottom_right(Rect::new(20, 5, 15, 1))]
     fn test_render_paragraph_out_of_bounds(#[case] area: Rect) {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 3));
-        Paragraph::new("Beyond the pale").render(area, &mut buffer);
+        Widget::render(Paragraph::new("Beyond the pale"), area, &mut buffer);
         assert_eq!(buffer, Buffer::with_lines(vec!["          "; 3]));
     }
 
     #[test]
     fn partial_out_of_bounds() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 15, 3));
-        Paragraph::new("Hello World").render(Rect::new(10, 0, 10, 3), &mut buffer);
+        Widget::render(
+            Paragraph::new("Hello World"),
+            Rect::new(10, 0, 10, 3),
+            &mut buffer,
+        );
         assert_eq!(
             buffer,
             Buffer::with_lines(vec![
@@ -1324,7 +1377,7 @@ mod tests {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 1, 1));
         let paragraph = Paragraph::new("Lorem ipsum");
         // This should not panic, even if the buffer is too small to render the paragraph.
-        paragraph.render(buffer.area, &mut buffer);
+        Widget::render(paragraph, buffer.area, &mut buffer);
         assert_eq!(buffer, Buffer::with_lines(["L"]));
     }
 
@@ -1333,6 +1386,6 @@ mod tests {
         let mut buffer = Buffer::empty(Rect::ZERO);
         let paragraph = Paragraph::new("Lorem ipsum");
         // This should not panic, even if the buffer has zero size.
-        paragraph.render(buffer.area, &mut buffer);
+        Widget::render(paragraph, buffer.area, &mut buffer);
     }
 }

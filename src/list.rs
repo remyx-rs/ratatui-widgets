@@ -2,6 +2,7 @@
 //! items.
 
 use alloc::vec::Vec;
+use core::hash::{Hash, Hasher};
 
 use ratatui_core::style::{Style, Styled};
 use ratatui_core::text::Line;
@@ -105,7 +106,7 @@ mod state;
 /// [`Text::alignment`]: ratatui_core::text::Text::alignment
 /// [`StatefulWidget`]: ratatui_core::widgets::StatefulWidget
 /// [`Widget`]: ratatui_core::widgets::Widget
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub struct List<'a, Item, Message = ()>
 where
     Item: Clone + Into<ListItem<'a>>,
@@ -152,6 +153,51 @@ where
             scroll_padding: Default::default(),
             on_select: Default::default(),
         }
+    }
+}
+
+impl<'a, Item, Message> PartialEq for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>> + PartialEq,
+    Message: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.block == other.block
+            && self.items == other.items
+            && self.list_items == other.list_items
+            && self.style == other.style
+            && self.direction == other.direction
+            && self.highlight_style == other.highlight_style
+            && self.highlight_symbol == other.highlight_symbol
+            && self.repeat_highlight_symbol == other.repeat_highlight_symbol
+            && self.highlight_spacing == other.highlight_spacing
+            && self.scroll_padding == other.scroll_padding
+    }
+}
+
+impl<'a, Item, Message> Eq for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>> + Eq,
+    Message: Eq,
+{
+}
+
+impl<'a, Item, Message> Hash for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>> + Hash,
+    Message: Hash,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.block.hash(state);
+        self.items.hash(state);
+        self.list_items.hash(state);
+        self.style.hash(state);
+        self.direction.hash(state);
+        self.highlight_style.hash(state);
+        self.highlight_symbol.hash(state);
+        self.repeat_highlight_symbol.hash(state);
+        self.highlight_spacing.hash(state);
+        self.scroll_padding.hash(state);
     }
 }
 
