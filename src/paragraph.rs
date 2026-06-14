@@ -366,6 +366,10 @@ impl<'a> Paragraph<'a> {
             .saturating_add(left as usize)
             .saturating_add(right as usize)
     }
+
+    pub fn height(&self) -> usize {
+        self.text.height()
+    }
 }
 
 impl Widget for Paragraph<'_> {
@@ -388,6 +392,7 @@ impl Widget for &Paragraph<'_> {
 pub struct ParagraphState {
     offset: Position,
     limits: Option<Position>,
+    height: usize,
 }
 
 pub enum Axe {
@@ -396,6 +401,13 @@ pub enum Axe {
 }
 
 impl ParagraphState {
+    pub fn new(height: usize) -> Self {
+        Self {
+            height,
+            ..Default::default()
+        }
+    }
+
     pub fn limits_set(&self) -> bool {
         self.limits.is_some()
     }
