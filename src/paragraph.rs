@@ -1,7 +1,5 @@
 //! The [`Paragraph`] widget and related types allows displaying a block of text with optional
 //! wrapping, alignment, and block styling.
-use core::ops::Add;
-
 use ratatui_core::buffer::{Buffer, CellWidth};
 use ratatui_core::layout::{Alignment, Position, Rect};
 use ratatui_core::style::{Style, Styled};
@@ -367,8 +365,14 @@ impl<'a> Paragraph<'a> {
             .saturating_add(right as usize)
     }
 
+    /// Returns the number of lines in the text.
     pub fn len(&self) -> usize {
         self.text.height()
+    }
+
+    /// Returns `true` if the paragraph contains no lines.
+    pub fn is_empty(&self) -> bool {
+        self.text.height() == 0
     }
 }
 
@@ -388,6 +392,9 @@ impl Widget for &Paragraph<'_> {
     }
 }
 
+/// State for the [`Paragraph`] widget when used as a [`StatefulWidget`].
+///
+/// Tracks the current scroll offset and content limits.
 #[derive(Default)]
 pub struct ParagraphState {
     offset: Position,
@@ -395,12 +402,16 @@ pub struct ParagraphState {
     length: usize,
 }
 
+/// The axis along which to scroll the paragraph.
 pub enum Axe {
+    /// Horizontal axis.
     X,
+    /// Vertical axis.
     Y,
 }
 
 impl ParagraphState {
+    /// Creates a new [`ParagraphState`] with the given content length.
     pub fn new(length: usize) -> Self {
         Self {
             length,
@@ -408,13 +419,21 @@ impl ParagraphState {
         }
     }
 
+    /// Returns the total number of lines in the content.
     pub fn len(&self) -> usize {
         self.length
     }
 
+    /// Returns `true` if the content has no lines.
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    /// Returns whether scroll limits have been set.
     pub fn limits_set(&self) -> bool {
         self.limits.is_some()
     }
+    /// Sets the maximum scroll limits for both axes.
     pub fn limits(&mut self, limits: Position) {
         if limits.x == 0 && limits.y == 0 {
             self.limits = None;
@@ -425,6 +444,7 @@ impl ParagraphState {
         }
     }
 
+    /// Adjusts the scroll offset along the given [`Axe`] by `qty`, clamped to the limits.
     pub fn offset_add(&mut self, axe: Axe, qty: i16) {
         match axe {
             Axe::X => {
