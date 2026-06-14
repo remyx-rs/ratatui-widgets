@@ -1,5 +1,7 @@
 //! The [`Paragraph`] widget and related types allows displaying a block of text with optional
 //! wrapping, alignment, and block styling.
+use core::ops::Add;
+
 use ratatui_core::buffer::{Buffer, CellWidth};
 use ratatui_core::layout::{Alignment, Position, Rect};
 use ratatui_core::style::{Style, Styled};
@@ -300,10 +302,6 @@ impl<'a> Paragraph<'a> {
     /// assert_eq!(paragraph.line_count(20), 1);
     /// assert_eq!(paragraph.line_count(10), 2);
     /// ```
-    #[instability::unstable(
-        feature = "rendered-line-info",
-        issue = "https://github.com/ratatui/ratatui/issues/293"
-    )]
     pub fn line_count(&self, width: u16) -> usize {
         if width < 1 {
             return 0;
@@ -356,10 +354,6 @@ impl<'a> Paragraph<'a> {
     /// let paragraph = Paragraph::new("Hello World\nhi\nHello World!!!");
     /// assert_eq!(paragraph.line_width(), 14);
     /// ```
-    #[instability::unstable(
-        feature = "rendered-line-info",
-        issue = "https://github.com/ratatui/ratatui/issues/293"
-    )]
     pub fn line_width(&self) -> usize {
         let width = self.text.iter().map(Line::width).max().unwrap_or_default();
         let (left, right) = self
@@ -393,6 +387,7 @@ impl Widget for &Paragraph<'_> {
 #[derive(Default)]
 pub struct ParagraphState {
     offset: Position,
+    limits: Option<Position>,
 }
 
 pub enum Axe {
@@ -401,11 +396,24 @@ pub enum Axe {
 }
 
 impl ParagraphState {
+    pub fn limits_set(&self) -> bool {
+        self.limits.is_some()
+    }
+    pub fn limits(&mut self, limits: Position) {
+        self.limits = Some(limits);
+        self.offset_add(Axe::X, 0);
+        self.offset_add(Axe::Y, 0);
+    }
+
     pub fn offset_add(&mut self, axe: Axe, qty: i16) {
         match axe {
             Axe::X => {
                 // Line Width + Offset <= Max Line width
-                let x = self.offset.x.saturating_add_signed(qty);
+                let x = self
+                    .limits
+                    .unwrap_or(Position::MAX)
+                    .x
+                    .min(self.offset.x.saturating_add_signed(qty));
                 self.offset = Position {
                     x,
                     y: self.offset.y,
@@ -413,7 +421,11 @@ impl ParagraphState {
             }
             Axe::Y => {
                 // Line count Screen + Offset <= Total lines
-                let y = self.offset.y.saturating_add_signed(qty);
+                let y = self
+                    .limits
+                    .unwrap_or(Position::MAX)
+                    .y
+                    .min(self.offset.y.saturating_add_signed(qty));
                 self.offset = Position {
                     x: self.offset.x,
                     y,
