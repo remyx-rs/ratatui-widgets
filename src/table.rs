@@ -3,6 +3,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::hash::{Hash, Hasher};
 
 use itertools::Itertools;
 use ratatui_core::buffer::Buffer;
@@ -229,9 +230,15 @@ mod state;
 /// ```
 ///
 /// [`Stylize`]: ratatui_core::style::Stylize
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Table<'a> {
-    /// Data to display in each row
+#[derive(Debug, Clone)]
+pub struct Table<'a, Item = Row<'a>, Message = ()>
+where
+    Item: Clone + Into<Row<'a>>,
+{
+    /// User-provided items, retained so they can be passed back to the `on_select` callback
+    items: Vec<Item>,
+
+    /// Data to display in each row (built from `items` for rendering)
     rows: Vec<Row<'a>>,
 
     /// Optional header
@@ -269,11 +276,18 @@ pub struct Table<'a> {
 
     /// Controls how to distribute extra space among the columns
     flex: Flex,
+
+    /// Callback invoked when a row is selected
+    on_select: Option<fn(&Item) -> Message>,
 }
 
-impl Default for Table<'_> {
+impl<'a, Item, Message> Default for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     fn default() -> Self {
         Self {
+            items: Vec::new(),
             rows: Vec::new(),
             header: None,
             footer: None,
@@ -287,11 +301,68 @@ impl Default for Table<'_> {
             highlight_symbol: Text::default(),
             highlight_spacing: HighlightSpacing::default(),
             flex: Flex::Start,
+            on_select: None,
         }
     }
 }
 
-impl<'a> Table<'a> {
+impl<'a, Item, Message> PartialEq for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>> + PartialEq,
+    Message: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items
+            && self.rows == other.rows
+            && self.header == other.header
+            && self.footer == other.footer
+            && self.widths == other.widths
+            && self.column_spacing == other.column_spacing
+            && self.block == other.block
+            && self.style == other.style
+            && self.row_highlight_style == other.row_highlight_style
+            && self.column_highlight_style == other.column_highlight_style
+            && self.cell_highlight_style == other.cell_highlight_style
+            && self.highlight_symbol == other.highlight_symbol
+            && self.highlight_spacing == other.highlight_spacing
+            && self.flex == other.flex
+    }
+}
+
+impl<'a, Item, Message> Eq for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>> + Eq,
+    Message: Eq,
+{
+}
+
+impl<'a, Item, Message> Hash for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>> + Hash,
+    Message: Hash,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.items.hash(state);
+        self.rows.hash(state);
+        self.header.hash(state);
+        self.footer.hash(state);
+        self.widths.hash(state);
+        self.column_spacing.hash(state);
+        self.block.hash(state);
+        self.style.hash(state);
+        self.row_highlight_style.hash(state);
+        self.column_highlight_style.hash(state);
+        self.cell_highlight_style.hash(state);
+        self.highlight_symbol.hash(state);
+        self.highlight_spacing.hash(state);
+        self.flex.hash(state);
+    }
+}
+
+impl<'a, Item, Message> Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     /// Creates a new [`Table`] widget with the given rows.
     ///
     /// The `rows` parameter accepts any value that can be converted into an iterator of [`Row`]s.
@@ -315,22 +386,51 @@ impl<'a> Table<'a> {
     /// let widths = [Constraint::Length(5), Constraint::Length(5)];
     /// let table = Table::new(rows, widths);
     /// ```
-    pub fn new<R, C>(rows: R, widths: C) -> Self
+    pub fn new<C>(items: impl Into<Vec<Item>>, widths: C) -> Self
     where
-        R: IntoIterator,
-        R::Item: Into<Row<'a>>,
         C: IntoIterator,
         C::Item: Into<Constraint>,
     {
         let widths = widths.into_iter().map(Into::into).collect_vec();
         ensure_percentages_less_than_100(&widths);
 
-        let rows = rows.into_iter().map(Into::into).collect();
+        let items = items.into();
+        let rows = items.iter().cloned().map(Item::into).collect();
         Self {
+            items,
             rows,
             widths,
             ..Default::default()
         }
+    }
+
+    /// Returns the table items as a slice.
+    pub fn items_as_slice(&self) -> &[Item] {
+        self.items.as_slice()
+    }
+
+    /// Returns the current `on_select` callback, if set.
+    pub fn on_select_ref(&self) -> Option<fn(&Item) -> Message> {
+        self.on_select
+    }
+
+    /// Sets a callback to be invoked when a row is selected.
+    pub fn on_select(mut self, f: fn(&Item) -> Message) -> Self {
+        self.on_select = Some(f);
+        self
+    }
+
+    /// Returns the area in which the table rows are rendered.
+    ///
+    /// The surrounding [`Block`] (if any), the header, the footer and their margins are subtracted
+    /// from `area`, leaving only the region occupied by the rows.
+    pub fn items_layout(&self, area: Rect) -> Rect {
+        self.layout(self.block.inner_if_some(area)).1
+    }
+
+    /// Returns an iterator over the rendered height of each row, margins included.
+    pub fn row_heights(&self) -> impl Iterator<Item = u16> + '_ {
+        self.rows.iter().map(Row::height_with_margin)
     }
 
     /// Set the rows
@@ -357,11 +457,9 @@ impl<'a> Table<'a> {
     /// let table = Table::default().rows(rows);
     /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
-    pub fn rows<T>(mut self, rows: T) -> Self
-    where
-        T: IntoIterator<Item = Row<'a>>,
-    {
-        self.rows = rows.into_iter().collect();
+    pub fn rows(mut self, items: impl Into<Vec<Item>>) -> Self {
+        self.items = items.into();
+        self.rows = self.items.iter().cloned().map(Item::into).collect();
         self
     }
 
@@ -722,20 +820,29 @@ impl<'a> Table<'a> {
     }
 }
 
-impl Widget for Table<'_> {
+impl<'a, Item, Message> Widget for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     fn render(self, area: Rect, buf: &mut Buffer) {
         Widget::render(&self, area, buf);
     }
 }
 
-impl Widget for &Table<'_> {
+impl<'a, Item, Message> Widget for &Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = TableState::default();
         StatefulWidget::render(self, area, buf, &mut state);
     }
 }
 
-impl StatefulWidget for Table<'_> {
+impl<'a, Item, Message> StatefulWidget for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     type State = TableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -743,7 +850,10 @@ impl StatefulWidget for Table<'_> {
     }
 }
 
-impl StatefulWidget for &Table<'_> {
+impl<'a, Item, Message> StatefulWidget for &Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     type State = TableState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
@@ -783,7 +893,10 @@ impl StatefulWidget for &Table<'_> {
 }
 
 // private methods for rendering
-impl Table<'_> {
+impl<'a, Item, Message> Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     /// Splits the table area into a header, rows area and a footer
     fn layout(&self, area: Rect) -> (Rect, Rect, Rect) {
         let header_top_margin = self.header.as_ref().map_or(0, |h| h.top_margin);
@@ -963,13 +1076,13 @@ impl Table<'_> {
     /// the width of each `Rect` plus `column_spacing` to a running total of the final width.  The
     /// return value is the original x coordinate and the final width, or `None` if
     /// `column_widths_iterator` is empty or `cell_column_span` is `0`.
-    fn get_cell_area<'a, T>(
+    fn get_cell_area<'b, T>(
         column_widths_iterator: &mut T,
         cell_column_span: u16,
         column_spacing: u16,
     ) -> Option<Rect>
     where
-        T: Iterator<Item = &'a Rect>,
+        T: Iterator<Item = &'b Rect>,
     {
         if cell_column_span == 0 {
             return None;
@@ -1097,7 +1210,10 @@ fn ensure_percentages_less_than_100(widths: &[Constraint]) {
     }
 }
 
-impl Styled for Table<'_> {
+impl<'a, Item, Message> Styled for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
     type Item = Self;
 
     fn style(&self) -> Style {
@@ -1109,17 +1225,18 @@ impl Styled for Table<'_> {
     }
 }
 
-impl<'a, Item> FromIterator<Item> for Table<'a>
+impl<'a, Item, Message> FromIterator<Item> for Table<'a, Item, Message>
 where
-    Item: Into<Row<'a>>,
+    Item: Clone + Into<Row<'a>>,
 {
     /// Collects an iterator of rows into a table.
     ///
     /// When collecting from an iterator into a table, the user must provide the widths using
     /// `Table::widths` after construction.
     fn from_iter<Iter: IntoIterator<Item = Item>>(rows: Iter) -> Self {
+        let items: Vec<Item> = rows.into_iter().collect();
         let widths: [Constraint; 0] = [];
-        Self::new(rows, widths)
+        Self::new(items, widths)
     }
 }
 
@@ -1135,6 +1252,8 @@ mod tests {
 
     use super::*;
     use crate::table::Cell;
+
+    type Table<'a> = super::Table<'a, Row<'a>, ()>;
 
     #[test]
     fn new() {
@@ -1324,7 +1443,7 @@ mod tests {
         use ratatui_core::widgets::StatefulWidget;
 
         use super::*;
-        use crate::table::{Row, Table, TableState};
+        use crate::table::{Row, TableState};
 
         #[fixture]
         fn table_buf() -> Buffer {
@@ -1479,7 +1598,8 @@ mod tests {
             Rows: IntoIterator<Item = Row<'rows>>,
         {
             let mut buf = Buffer::empty(Rect::new(0, 0, width, 2));
-            let table = Table::new(rows, [Constraint::Length(column_width); 2]);
+            let items = rows.into_iter().collect::<Vec<_>>();
+            let table = Table::new(items, [Constraint::Length(column_width); 2]);
             Widget::render(table, Rect::new(0, 0, width, 2), &mut buf);
             assert_eq!(buf, *expected);
         }
@@ -1528,7 +1648,8 @@ mod tests {
             Rows: IntoIterator<Item = Row<'rows>>,
         {
             let mut buf = Buffer::empty(Rect::new(0, 0, width, 2));
-            let table = Table::new(rows, [Constraint::Length(column_width); 3]);
+            let items = rows.into_iter().collect::<Vec<_>>();
+            let table = Table::new(items, [Constraint::Length(column_width); 3]);
             Widget::render(table, Rect::new(0, 0, width, 2), &mut buf);
             assert_eq!(buf, *expected);
         }
@@ -1836,7 +1957,8 @@ mod tests {
         ) {
             // render 100 rows offset at 50, with a selected row
             let rows = (0..100).map(|i| Row::new([i.to_string()]));
-            let table = Table::new(rows, [Constraint::Length(2)]);
+            let items = rows.into_iter().collect::<Vec<_>>();
+            let table = Table::new(items, [Constraint::Length(2)]);
             let mut buf = Buffer::empty(Rect::new(0, 0, 2, 5));
             let mut state = TableState::new()
                 .with_offset(50)
@@ -2537,8 +2659,9 @@ mod tests {
     ) {
         let header = Row::new(header);
         let footer = Row::new(footer);
-        let rows: Vec<Row> = rows.into_iter().map(Row::new).collect();
-        let table = Table::new(rows, Vec::<Constraint>::new())
+
+        let items: Vec<Row> = rows.into_iter().map(Row::new).collect();
+        let table = Table::new(items, Vec::<Constraint>::new())
             .header(header)
             .footer(footer);
         let column_count = table.column_count();
@@ -2590,7 +2713,7 @@ mod tests {
 
     #[rstest]
     #[case(&[Rect{x: 3, width: 2, y: 0, height: 1}, Rect{x: 3, width: 2, y: 0, height: 1}, Rect{x: 3, width: 2, y: 0, height: 1}], 2, 5)]
-    #[case(&[Rect{x: 3, width: 2, y: 0, height: 1}, Rect{x: 3, width: 2, y: 0, height: 1}], 2, 5,)]
+    #[case(&[Rect{x: 3, width: 2, y: 0, height: 1}, Rect{x: 3, width: 2, y: 0, height: 1}], 2, 5)]
     #[case(&[Rect{x: 3, width: 2, y: 0, height: 1}, Rect{x: 3, width: 2, y: 0, height: 1}], 1, 2)]
     #[case(&[Rect{x: 3, width: 2, y: 0, height: 1}, Rect{x: 3, width: 2, y: 0, height: 1}], 3, 5)]
     #[case(&[Rect{x: 3, width: 2, y: 0, height: 1}], 1, 2)]

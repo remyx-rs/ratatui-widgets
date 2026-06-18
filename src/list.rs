@@ -4,13 +4,14 @@
 use alloc::vec::Vec;
 use core::hash::{Hash, Hasher};
 
+use ratatui_core::layout::Rect;
 use ratatui_core::style::{Style, Styled};
 use ratatui_core::text::Line;
 use strum::{Display, EnumString};
 
 pub use self::item::ListItem;
 pub use self::state::ListState;
-use crate::block::Block;
+use crate::block::{Block, BlockExt};
 use crate::table::HighlightSpacing;
 
 mod item;
@@ -272,9 +273,13 @@ where
         }
     }
 
-    /// Returns a reference to the optional [`Block`] wrapping the list.
-    pub fn block_as_ref(&self) -> Option<&Block<'a>> {
-        self.block.as_ref()
+    /// Returns the area in which the list items are rendered.
+    ///
+    /// `area` is the full area the list is drawn into. The surrounding [`Block`] (if any) is
+    /// subtracted, leaving only the region occupied by the items. This is the region that mouse
+    /// clicks have to be mapped against to figure out which item was clicked.
+    pub fn items_layout(&self, area: Rect) -> Rect {
+        self.block.inner_if_some(area)
     }
 
     /// Returns the list items as a slice.
