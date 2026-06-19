@@ -119,6 +119,7 @@ pub mod canvas;
 pub mod chart;
 pub mod clear;
 pub mod fill;
+pub mod focus;
 pub mod gauge;
 pub mod list;
 pub mod logo;

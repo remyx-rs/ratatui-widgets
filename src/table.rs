@@ -279,6 +279,9 @@ where
 
     /// Callback invoked when a row is selected
     on_select: Option<fn(&Item) -> Message>,
+
+    /// Whether this widget currently has focus
+    pub(crate) focus: bool,
 }
 
 impl<'a, Item, Message> Default for Table<'a, Item, Message>
@@ -302,6 +305,7 @@ where
             highlight_spacing: HighlightSpacing::default(),
             flex: Flex::Start,
             on_select: None,
+            focus: false,
         }
     }
 }
@@ -326,6 +330,7 @@ where
             && self.highlight_symbol == other.highlight_symbol
             && self.highlight_spacing == other.highlight_spacing
             && self.flex == other.flex
+            && self.focus == other.focus
     }
 }
 
