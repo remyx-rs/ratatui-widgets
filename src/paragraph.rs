@@ -85,6 +85,8 @@ pub struct Paragraph<'a> {
     text: Text<'a>,
     /// Alignment of the text
     alignment: Alignment,
+    /// Whether this widget currently has focus
+    pub(crate) focus: bool,
 }
 
 /// Describes how to wrap text across lines.
@@ -154,6 +156,7 @@ impl<'a> Paragraph<'a> {
             wrap: None,
             text,
             alignment,
+            focus: false,
         }
     }
 

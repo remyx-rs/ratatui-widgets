@@ -1,0 +1,59 @@
+//! Focus management for stateful widgets.
+//!
+//! This module provides the [`Focusable`] trait, which allows widgets to track
+//! whether they currently have input focus. Implementations are provided for
+//! [`List`] and [`Table`].
+
+use crate::{
+    list::{List, ListItem},
+    paragraph::Paragraph,
+    table::{Row, Table},
+};
+
+/// A widget that can receive and report input focus.
+pub trait Focusable {
+    /// Sets the focus state and returns the modified widget.
+    fn focus(self, focus: bool) -> Self;
+
+    /// Returns `true` if the widget currently has focus.
+    fn is_focused(&self) -> bool;
+}
+
+impl<'a, Item, Message> Focusable for List<'a, Item, Message>
+where
+    Item: Clone + Into<ListItem<'a>>,
+{
+    fn focus(mut self, focus: bool) -> Self {
+        self.focus = focus;
+        self
+    }
+
+    fn is_focused(&self) -> bool {
+        self.focus
+    }
+}
+
+impl<'a, Item, Message> Focusable for Table<'a, Item, Message>
+where
+    Item: Clone + Into<Row<'a>>,
+{
+    fn focus(mut self, focus: bool) -> Self {
+        self.focus = focus;
+        self
+    }
+
+    fn is_focused(&self) -> bool {
+        self.focus
+    }
+}
+
+impl<'a> Focusable for Paragraph<'a> {
+    fn focus(mut self, focus: bool) -> Self {
+        self.focus = focus;
+        self
+    }
+
+    fn is_focused(&self) -> bool {
+        self.focus
+    }
+}

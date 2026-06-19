@@ -134,6 +134,8 @@ where
     pub(crate) scroll_padding: usize,
     /// Callback invoked when an item is selected
     pub(crate) on_select: Option<fn(&Item) -> Message>,
+    /// Whether this widget currently has focus
+    pub(crate) focus: bool,
 }
 
 impl<'a, Item, Message> Default for List<'a, Item, Message>
@@ -153,6 +155,7 @@ where
             highlight_spacing: Default::default(),
             scroll_padding: Default::default(),
             on_select: Default::default(),
+            focus: false,
         }
     }
 }
@@ -173,6 +176,7 @@ where
             && self.repeat_highlight_symbol == other.repeat_highlight_symbol
             && self.highlight_spacing == other.highlight_spacing
             && self.scroll_padding == other.scroll_padding
+            && self.focus == other.focus
     }
 }
 
