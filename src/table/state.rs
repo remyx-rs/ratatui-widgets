@@ -56,6 +56,7 @@ pub struct TableState {
     pub(crate) offset: usize,
     pub(crate) selected: Option<usize>,
     pub(crate) selected_column: Option<usize>,
+    pub(crate) length: usize,
 }
 
 impl TableState {
@@ -66,14 +67,25 @@ impl TableState {
     /// ```rust
     /// use ratatui::widgets::TableState;
     ///
-    /// let state = TableState::new();
+    /// let state = TableState::new(10);
     /// ```
-    pub const fn new() -> Self {
+    pub const fn new(length: usize) -> Self {
         Self {
             offset: 0,
             selected: None,
             selected_column: None,
+            length,
         }
+    }
+
+    /// Returns the total number of lines in the content.
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Returns `true` if the content has no lines.
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
     }
 
     /// Sets the index of the first row to be displayed
@@ -85,7 +97,7 @@ impl TableState {
     /// ```rust
     /// use ratatui::widgets::TableState;
     ///
-    /// let state = TableState::new().with_offset(1);
+    /// let state = TableState::new(10).with_offset(1);
     /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
     pub const fn with_offset(mut self, offset: usize) -> Self {
@@ -102,7 +114,7 @@ impl TableState {
     /// ```rust
     /// use ratatui::widgets::TableState;
     ///
-    /// let state = TableState::new().with_selected(Some(1));
+    /// let state = TableState::new(10).with_selected(Some(1));
     /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
     pub fn with_selected<T>(mut self, selected: T) -> Self
@@ -121,7 +133,7 @@ impl TableState {
     ///
     /// ```rust
     /// # use ratatui::widgets::{TableState};
-    /// let state = TableState::new().with_selected_column(Some(1));
+    /// let state = TableState::new(10).with_selected_column(Some(1));
     /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
     pub fn with_selected_column<T>(mut self, selected: T) -> Self
@@ -140,7 +152,7 @@ impl TableState {
     ///
     /// ```rust
     /// # use ratatui::widgets::{TableState};
-    /// let state = TableState::new().with_selected_cell(Some((1, 5)));
+    /// let state = TableState::new(10).with_selected_cell(Some((1, 5)));
     /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
     pub fn with_selected_cell<T>(mut self, selected: T) -> Self
@@ -165,7 +177,7 @@ impl TableState {
     /// ```rust
     /// use ratatui::widgets::TableState;
     ///
-    /// let state = TableState::new();
+    /// let state = TableState::new(10);
     /// assert_eq!(state.offset(), 0);
     /// ```
     pub const fn offset(&self) -> usize {
@@ -195,7 +207,7 @@ impl TableState {
     /// ```rust
     /// use ratatui::widgets::TableState;
     ///
-    /// let state = TableState::new();
+    /// let state = TableState::new(10);
     /// assert_eq!(state.selected(), None);
     /// ```
     pub const fn selected(&self) -> Option<usize> {
@@ -210,7 +222,7 @@ impl TableState {
     ///
     /// ```rust
     /// # use ratatui::widgets::{TableState};
-    /// let state = TableState::new();
+    /// let state = TableState::new(10);
     /// assert_eq!(state.selected_column(), None);
     /// ```
     pub const fn selected_column(&self) -> Option<usize> {
@@ -225,7 +237,7 @@ impl TableState {
     ///
     /// ```rust
     /// # use ratatui::widgets::{TableState};
-    /// let state = TableState::new();
+    /// let state = TableState::new(10);
     /// assert_eq!(state.selected_cell(), None);
     /// ```
     pub const fn selected_cell(&self) -> Option<(usize, usize)> {
@@ -539,120 +551,121 @@ mod tests {
 
     #[test]
     fn new() {
-        let state = TableState::new();
+        let state = TableState::new(10);
         assert_eq!(state.offset, 0);
         assert_eq!(state.selected, None);
         assert_eq!(state.selected_column, None);
+        assert_eq!(state.length, 10);
     }
 
     #[test]
     fn with_offset() {
-        let state = TableState::new().with_offset(1);
+        let state = TableState::new(10).with_offset(1);
         assert_eq!(state.offset, 1);
     }
 
     #[test]
     fn with_selected() {
-        let state = TableState::new().with_selected(Some(1));
+        let state = TableState::new(10).with_selected(Some(1));
         assert_eq!(state.selected, Some(1));
     }
 
     #[test]
     fn with_selected_column() {
-        let state = TableState::new().with_selected_column(Some(1));
+        let state = TableState::new(10).with_selected_column(Some(1));
         assert_eq!(state.selected_column, Some(1));
     }
 
     #[test]
     fn with_selected_cell_none() {
-        let state = TableState::new().with_selected_cell(None);
+        let state = TableState::new(10).with_selected_cell(None);
         assert_eq!(state.selected, None);
         assert_eq!(state.selected_column, None);
     }
 
     #[test]
     fn offset() {
-        let state = TableState::new();
+        let state = TableState::new(10);
         assert_eq!(state.offset(), 0);
     }
 
     #[test]
     fn offset_mut() {
-        let mut state = TableState::new();
+        let mut state = TableState::new(10);
         *state.offset_mut() = 1;
         assert_eq!(state.offset, 1);
     }
 
     #[test]
     fn selected() {
-        let state = TableState::new();
+        let state = TableState::new(10);
         assert_eq!(state.selected(), None);
     }
 
     #[test]
     fn selected_column() {
-        let state = TableState::new();
+        let state = TableState::new(10);
         assert_eq!(state.selected_column(), None);
     }
 
     #[test]
     fn selected_cell() {
-        let state = TableState::new();
+        let state = TableState::new(10);
         assert_eq!(state.selected_cell(), None);
     }
 
     #[test]
     fn selected_mut() {
-        let mut state = TableState::new();
+        let mut state = TableState::new(10);
         *state.selected_mut() = Some(1);
         assert_eq!(state.selected, Some(1));
     }
 
     #[test]
     fn selected_column_mut() {
-        let mut state = TableState::new();
+        let mut state = TableState::new(10);
         *state.selected_column_mut() = Some(1);
         assert_eq!(state.selected_column, Some(1));
     }
 
     #[test]
     fn select() {
-        let mut state = TableState::new();
+        let mut state = TableState::new(10);
         state.select(Some(1));
         assert_eq!(state.selected, Some(1));
     }
 
     #[test]
     fn select_none() {
-        let mut state = TableState::new().with_selected(Some(1));
+        let mut state = TableState::new(10).with_selected(Some(1));
         state.select(None);
         assert_eq!(state.selected, None);
     }
 
     #[test]
     fn select_column() {
-        let mut state = TableState::new();
+        let mut state = TableState::new(10);
         state.select_column(Some(1));
         assert_eq!(state.selected_column, Some(1));
     }
 
     #[test]
     fn select_column_none() {
-        let mut state = TableState::new().with_selected_column(Some(1));
+        let mut state = TableState::new(10).with_selected_column(Some(1));
         state.select_column(None);
         assert_eq!(state.selected_column, None);
     }
 
     #[test]
     fn select_cell() {
-        let mut state = TableState::new();
+        let mut state = TableState::new(10);
         state.select_cell(Some((1, 5)));
         assert_eq!(state.selected_cell(), Some((1, 5)));
     }
 
     #[test]
     fn select_cell_none() {
-        let mut state = TableState::new().with_selected_cell(Some((1, 5)));
+        let mut state = TableState::new(10).with_selected_cell(Some((1, 5)));
         state.select_cell(None);
         assert_eq!(state.selected, None);
         assert_eq!(state.selected_column, None);

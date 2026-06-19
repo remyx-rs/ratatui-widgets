@@ -404,6 +404,16 @@ where
         }
     }
 
+    /// Returns the number of items in the table.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Returns true if the table contains no items.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
     /// Returns the table items as a slice.
     pub fn items_as_slice(&self) -> &[Item] {
         self.items.as_slice()
@@ -1816,7 +1826,7 @@ mod tests {
                 vec![Row::new(vec!["Row1", "Row2", "Row3"])],
                 [Constraint::Length(10); 1],
             );
-            let mut state = TableState::new().with_selected_column(2);
+            let mut state = TableState::new(1).with_selected_column(2);
             StatefulWidget::render(table, Rect::new(0, 0, 20, 3), &mut buf, &mut state);
         }
 
@@ -1830,7 +1840,7 @@ mod tests {
             let table = Table::new(rows, [Constraint::Length(5); 2])
                 .row_highlight_style(Style::new().red())
                 .highlight_symbol(">>");
-            let mut state = TableState::new().with_selected(Some(0));
+            let mut state = TableState::new(2).with_selected(Some(0));
             StatefulWidget::render(table, Rect::new(0, 0, 15, 3), &mut buf, &mut state);
             let expected = Buffer::with_lines([
                 ">>Cell1 Cell2  ".red(),
@@ -1850,7 +1860,7 @@ mod tests {
             let table = Table::new(rows, [Constraint::Length(5); 2])
                 .column_highlight_style(Style::new().blue())
                 .highlight_symbol(">>");
-            let mut state = TableState::new().with_selected_column(Some(1));
+            let mut state = TableState::new(2).with_selected_column(Some(1));
             StatefulWidget::render(table, Rect::new(0, 0, 15, 3), &mut buf, &mut state);
             let expected = Buffer::with_lines::<[Line; 3]>([
                 Line::from(vec![
@@ -1881,7 +1891,7 @@ mod tests {
             let table = Table::new(rows, [Constraint::Length(5); 3])
                 .highlight_symbol(">>")
                 .cell_highlight_style(Style::new().green());
-            let mut state = TableState::new().with_selected_cell((1, 2));
+            let mut state = TableState::new(3).with_selected_cell((1, 2));
             StatefulWidget::render(table, Rect::new(0, 0, 20, 4), &mut buf, &mut state);
             let expected = Buffer::with_lines::<[Line; 4]>([
                 Line::from(vec!["  Cell1 ".into(), "Cell2 ".into(), "Cell3".into()]),
@@ -1904,7 +1914,7 @@ mod tests {
                 .highlight_symbol(">>")
                 .row_highlight_style(Style::new().red())
                 .column_highlight_style(Style::new().blue());
-            let mut state = TableState::new().with_selected(1).with_selected_column(2);
+            let mut state = TableState::new(3).with_selected(1).with_selected_column(2);
             StatefulWidget::render(table, Rect::new(0, 0, 20, 4), &mut buf, &mut state);
             let expected = Buffer::with_lines::<[Line; 4]>([
                 Line::from(vec!["  Cell1 ".into(), "Cell2 ".into(), "Cell3".blue()]),
@@ -1928,7 +1938,7 @@ mod tests {
                 .row_highlight_style(Style::new().red())
                 .column_highlight_style(Style::new().blue())
                 .cell_highlight_style(Style::new().green());
-            let mut state = TableState::new().with_selected(1).with_selected_column(2);
+            let mut state = TableState::new(3).with_selected(1).with_selected_column(2);
             StatefulWidget::render(table, Rect::new(0, 0, 20, 4), &mut buf, &mut state);
             let expected = Buffer::with_lines::<[Line; 4]>([
                 Line::from(vec!["  Cell1 ".into(), "Cell2 ".into(), "Cell3".blue()]),
@@ -1958,9 +1968,10 @@ mod tests {
             // render 100 rows offset at 50, with a selected row
             let rows = (0..100).map(|i| Row::new([i.to_string()]));
             let items = rows.into_iter().collect::<Vec<_>>();
+            let num_items = items.len();
             let table = Table::new(items, [Constraint::Length(2)]);
             let mut buf = Buffer::empty(Rect::new(0, 0, 2, 5));
-            let mut state = TableState::new()
+            let mut state = TableState::new(num_items)
                 .with_offset(50)
                 .with_selected(selected_row.into());
 

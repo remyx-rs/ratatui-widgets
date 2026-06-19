@@ -45,9 +45,27 @@
 pub struct ListState {
     pub(crate) offset: usize,
     pub(crate) selected: Option<usize>,
+    pub(crate) length: usize,
 }
 
 impl ListState {
+    /// Creates a new [`ListState`]
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use ratatui::widgets::ListState;
+    ///
+    /// let state = ListState::new(10);
+    /// ```
+    pub const fn new(length: usize) -> Self {
+        Self {
+            offset: 0,
+            selected: None,
+            length,
+        }
+    }
+
     /// Sets the index of the first item to be displayed
     ///
     /// This is a fluent setter method which must be chained or used as it consumes self
@@ -63,6 +81,16 @@ impl ListState {
     pub const fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
+    }
+
+    /// Returns the total number of lines in the content.
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    /// Returns `true` if the content has no lines.
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
     }
 
     /// Sets the index of the selected item
@@ -278,7 +306,7 @@ mod tests {
 
     #[test]
     fn selected() {
-        let mut state = ListState::default();
+        let mut state = ListState::new(3);
         assert_eq!(state.selected(), None);
 
         state.select(Some(1));
@@ -290,7 +318,7 @@ mod tests {
 
     #[test]
     fn select() {
-        let mut state = ListState::default();
+        let mut state = ListState::new(5);
         assert_eq!(state.selected, None);
         assert_eq!(state.offset, 0);
 
@@ -305,7 +333,7 @@ mod tests {
 
     #[test]
     fn state_navigation() {
-        let mut state = ListState::default();
+        let mut state = ListState::new(10);
         state.select_first();
         assert_eq!(state.selected, Some(0));
 
@@ -330,20 +358,20 @@ mod tests {
         state.select_next();
         assert_eq!(state.selected, Some(usize::MAX));
 
-        let mut state = ListState::default();
+        let mut state = ListState::new(10);
         state.select_next();
         assert_eq!(state.selected, Some(0));
 
-        let mut state = ListState::default();
+        let mut state = ListState::new(10);
         state.select_previous();
         assert_eq!(state.selected, Some(usize::MAX));
 
-        let mut state = ListState::default();
+        let mut state = ListState::new(10);
         state.select(Some(2));
         state.scroll_down_by(4);
         assert_eq!(state.selected, Some(6));
 
-        let mut state = ListState::default();
+        let mut state = ListState::new(10);
         state.scroll_up_by(3);
         assert_eq!(state.selected, Some(0));
 
