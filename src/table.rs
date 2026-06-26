@@ -280,6 +280,9 @@ where
     /// Callback invoked when a row is selected
     on_select: Option<fn(&Item) -> Message>,
 
+    /// Callback invoked when a row is submitted (e.g. Enter key)
+    on_submit: Option<fn(&Item) -> Message>,
+
     /// Whether this widget currently has focus
     pub(crate) focus: bool,
 }
@@ -305,6 +308,7 @@ where
             highlight_spacing: HighlightSpacing::default(),
             flex: Flex::Start,
             on_select: None,
+            on_submit: None,
             focus: false,
         }
     }
@@ -432,6 +436,17 @@ where
     /// Sets a callback to be invoked when a row is selected.
     pub fn on_select(mut self, f: fn(&Item) -> Message) -> Self {
         self.on_select = Some(f);
+        self
+    }
+
+    /// Returns the current `on_submit` callback, if set.
+    pub fn on_submit_ref(&self) -> Option<fn(&Item) -> Message> {
+        self.on_submit
+    }
+
+    /// Sets a callback to be invoked when a row is submitted (e.g. Enter key).
+    pub fn on_submit(mut self, f: fn(&Item) -> Message) -> Self {
+        self.on_submit = Some(f);
         self
     }
 
