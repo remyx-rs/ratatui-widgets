@@ -1,3 +1,5 @@
+use core::borrow::Borrow;
+
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::text::{Line, ToLine};
@@ -6,18 +8,22 @@ use ratatui_core::widgets::{StatefulWidget, Widget};
 use crate::block::BlockExt;
 use crate::list::{List, ListDirection, ListItem, ListState};
 
-impl<'a, Item, Message> Widget for List<'a, Item, Message>
+impl<'a, Item, Items, Message> Widget for List<'a, Item, Items, Message>
 where
-    Item: Clone + Into<ListItem<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> ListItem<'a>: From<&'b Item>,
 {
     fn render(self, area: Rect, buf: &mut Buffer) {
         Widget::render(&self, area, buf);
     }
 }
 
-impl<'a, Item, Message> Widget for &List<'a, Item, Message>
+impl<'a, Item, Items, Message> Widget for &List<'a, Item, Items, Message>
 where
-    Item: Clone + Into<ListItem<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> ListItem<'a>: From<&'b Item>,
 {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = ListState::default();
@@ -25,9 +31,11 @@ where
     }
 }
 
-impl<'a, Item, Message> StatefulWidget for List<'a, Item, Message>
+impl<'a, Item, Items, Message> StatefulWidget for List<'a, Item, Items, Message>
 where
-    Item: Clone + Into<ListItem<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> ListItem<'a>: From<&'b Item>,
 {
     type State = ListState;
 
@@ -36,9 +44,11 @@ where
     }
 }
 
-impl<'a, Item, Message> StatefulWidget for &List<'a, Item, Message>
+impl<'a, Item, Items, Message> StatefulWidget for &List<'a, Item, Items, Message>
 where
-    Item: Clone + Into<ListItem<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> ListItem<'a>: From<&'b Item>,
 {
     type State = ListState;
 
@@ -51,20 +61,23 @@ where
             return;
         }
 
-        if self.items.is_empty() {
-            state.select(None);
+        let items_slice = self.items.borrow();
+
+        if items_slice.is_empty() {
             return;
         }
 
-        // If the selected index is out of bounds, set it to the last item
-        if state.selected.is_some_and(|s| s >= self.items.len()) {
-            state.select(Some(self.items.len().saturating_sub(1)));
-        }
+        // If the selected index is out of bounds, clamp to the last item
+        let selected = if self.selected.is_some_and(|s| s >= items_slice.len()) {
+            Some(items_slice.len().saturating_sub(1))
+        } else {
+            self.selected
+        };
 
         let list_height = list_area.height as usize;
 
         let (first_visible_index, last_visible_index) =
-            self.get_items_bounds(state.selected, state.offset, list_height);
+            self.get_items_bounds(selected, state.offset, list_height);
 
         // Important: this changes the state's offset to be the beginning of the now viewable items
         state.offset = first_visible_index;
@@ -80,14 +93,10 @@ where
         let empty_symbol = empty_symbol.to_line();
 
         let mut current_height = 0;
-        let selection_spacing = self.highlight_spacing.should_add(state.selected.is_some());
-        for (i, list_item) in self
-            .list_items
-            .iter()
-            .enumerate()
-            .skip(state.offset)
-            .take(last_visible_index - first_visible_index)
-        {
+        let selection_spacing = self.highlight_spacing.should_add(selected.is_some());
+        for i in first_visible_index..last_visible_index {
+            let list_item = self.item_at(i);
+
             let (x, y) = if self.direction == ListDirection::BottomToTop {
                 current_height += list_item.height() as u16;
                 (list_area.left(), list_area.bottom() - current_height)
@@ -102,7 +111,7 @@ where
             let item_style = self.style.patch(list_item.style);
             buf.set_style(row_area, item_style);
 
-            let is_selected = state.selected == Some(i);
+            let is_selected = selected == Some(i);
 
             let item_area = if selection_spacing {
                 Rect {
@@ -136,12 +145,19 @@ where
     }
 }
 
-impl<'a, Item, Message> List<'a, Item, Message>
+impl<'a, Item, Items, Message> List<'a, Item, Items, Message>
 where
-    Item: Clone + Into<ListItem<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> ListItem<'a>: From<&'b Item>,
 {
+    /// Returns the `ListItem` at the given index by converting from the underlying item.
+    fn item_at(&self, index: usize) -> ListItem<'a> {
+        ListItem::from(&self.items.borrow()[index])
+    }
+
     fn item_height(&self, index: usize) -> usize {
-        self.list_items[index].height()
+        self.item_at(index).height()
     }
 
     /// Given an offset, calculate which items can fit in a given area
@@ -151,7 +167,8 @@ where
         offset: usize,
         max_height: usize,
     ) -> (usize, usize) {
-        let offset = offset.min(self.items.len().saturating_sub(1));
+        let items_len = self.items.borrow().len();
+        let offset = offset.min(items_len.saturating_sub(1));
 
         // Note: visible here implies visible in the given area
         let mut first_visible_index = offset;
@@ -162,13 +179,12 @@ where
 
         // Calculate the last visible index and total height of the items
         // that will fit in the available space
-        for list_item in self.list_items.iter().skip(offset) {
-            if height_from_offset + list_item.height() > max_height {
+        for i in offset..items_len {
+            let h = self.item_height(i);
+            if height_from_offset + h > max_height {
                 break;
             }
-
-            height_from_offset += list_item.height();
-
+            height_from_offset += h;
             last_visible_index += 1;
         }
 
@@ -185,9 +201,9 @@ where
             .unwrap_or(offset);
 
         // Recall that last_visible_index is the index of what we
-        // can render up to in the given space after the offset
+        // can render up to in the given space after the offset.
         // If we have an item selected that is out of the viewable area (or
-        // the offset is still set), we still need to show this item
+        // the offset is still set), we still need to show this item.
         while index_to_display >= last_visible_index {
             height_from_offset =
                 height_from_offset.saturating_add(self.item_height(last_visible_index));
@@ -205,15 +221,13 @@ where
             }
         }
 
-        // Here we're doing something similar to what we just did above
-        // If the selected item index is not in the viewable area, let's try to show the item
+        // If the selected item index is not in the viewable area, try to show it
         while index_to_display < first_visible_index {
             first_visible_index -= 1;
 
             height_from_offset =
                 height_from_offset.saturating_add(self.item_height(first_visible_index));
 
-            // Don't show an item if it is beyond our viewable height
             while height_from_offset > max_height {
                 last_visible_index -= 1;
 
@@ -227,8 +241,6 @@ where
 
     /// Applies scroll padding to the selected index, reducing the padding value to keep the
     /// selected item on screen even with items of inconsistent sizes
-    ///
-    /// This function is sensitive to how the bounds checking function handles item height
     fn apply_scroll_padding_to_selected_index(
         &self,
         selected: Option<usize>,
@@ -236,13 +248,14 @@ where
         first_visible_index: usize,
         last_visible_index: usize,
     ) -> Option<usize> {
-        let last_valid_index = self.items.len().saturating_sub(1);
+        let items_len = self.items.borrow().len();
+        let last_valid_index = items_len.saturating_sub(1);
         let selected = selected?.min(last_valid_index);
 
         // The below loop handles situations where the list item sizes may not be consistent,
         // where the offset would have excluded some items that we want to include, or could
         // cause the offset value to be set to an inconsistent value each time we render.
-        // The padding value will be reduced in case any of these issues would occur
+        // The padding value will be reduced in case any of these issues would occur.
         let mut scroll_padding = self.scroll_padding;
         while scroll_padding > 0 {
             let mut height_around_selected = 0;
@@ -279,6 +292,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use pretty_assertions::assert_eq;
+    use ratatui_core::buffer::Buffer;
     use ratatui_core::layout::{Alignment, Rect};
     use ratatui_core::style::{Color, Modifier, Style, Stylize};
     use ratatui_core::text::Line;
@@ -290,6 +304,8 @@ mod tests {
     use crate::list::ListItem;
     use crate::table::HighlightSpacing;
 
+    fn noop(_: &ListItem) -> () {}
+
     #[fixture]
     fn single_line_buf() -> Buffer {
         Buffer::empty(Rect::new(0, 0, 10, 1))
@@ -300,10 +316,8 @@ mod tests {
         let mut state = ListState::default();
 
         let items: Vec<ListItem> = Vec::new();
-        let list = List::<_>::new(items);
-        state.select_first();
+        let list = List::new(items, None::<&ListItem>, noop);
         StatefulWidget::render(list, single_line_buf.area, &mut single_line_buf, &mut state);
-        assert_eq!(state.selected, None);
     }
 
     #[rstest]
@@ -311,86 +325,48 @@ mod tests {
         let mut state = ListState::default();
 
         let items = vec![ListItem::new("Item 1")];
-        let list = List::<_>::new(items);
-        state.select_first();
+        let list = List::new(items, Some(&ListItem::new("Item 1")), noop);
         StatefulWidget::render(
             &list,
             single_line_buf.area,
             &mut single_line_buf,
             &mut state,
         );
-        assert_eq!(state.selected, Some(0));
-
-        state.select_last();
-        StatefulWidget::render(
-            &list,
-            single_line_buf.area,
-            &mut single_line_buf,
-            &mut state,
-        );
-        assert_eq!(state.selected, Some(0));
-
-        state.select_previous();
-        StatefulWidget::render(
-            &list,
-            single_line_buf.area,
-            &mut single_line_buf,
-            &mut state,
-        );
-        assert_eq!(state.selected, Some(0));
-
-        state.select_next();
-        StatefulWidget::render(
-            &list,
-            single_line_buf.area,
-            &mut single_line_buf,
-            &mut state,
-        );
-        assert_eq!(state.selected, Some(0));
+        assert_eq!(list.selected, Some(0));
     }
 
-    /// helper method to render a widget to an empty buffer with the default state
-    fn widget<'a, Item: Clone + Into<ListItem<'a>>>(
-        widget: List<'a, Item>,
-        width: u16,
-        height: u16,
-    ) -> Buffer {
+    fn render_widget(list: List<'_>, width: u16, height: u16) -> Buffer {
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
-        Widget::render(widget, buffer.area, &mut buffer);
+        Widget::render(list, buffer.area, &mut buffer);
         buffer
     }
 
-    /// helper method to render a widget to an empty buffer with a given state
-    fn stateful_widget<'a, Item: Clone + Into<ListItem<'a>>>(
-        widget: List<'a, Item>,
-        state: &mut ListState,
-        width: u16,
-        height: u16,
-    ) -> Buffer {
+    fn render_stateful(list: List<'_>, state: &mut ListState, width: u16, height: u16) -> Buffer {
         let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
-        StatefulWidget::render(widget, buffer.area, &mut buffer, state);
+        StatefulWidget::render(list, buffer.area, &mut buffer, state);
         buffer
     }
 
     #[test]
     fn does_not_render_in_small_space() {
-        let items = vec!["Item 0", "Item 1", "Item 2"];
-        let list = List::<_>::new(items.clone()).highlight_symbol(">>");
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items.clone(), None::<&ListItem>, noop).highlight_symbol(">>");
         let mut buffer = Buffer::empty(Rect::new(0, 0, 15, 3));
 
-        // attempt to render into an area of the buffer with 0 width
-        Widget::render(list.clone(), Rect::new(0, 0, 0, 3), &mut buffer);
+        Widget::render(list, Rect::new(0, 0, 0, 3), &mut buffer);
         assert_eq!(&buffer, &Buffer::empty(buffer.area));
 
-        // attempt to render into an area of the buffer with 0 height
-        Widget::render(list.clone(), Rect::new(0, 0, 15, 0), &mut buffer);
+        let list = List::new(items.clone(), None::<&ListItem>, noop).highlight_symbol(">>");
+        Widget::render(list, Rect::new(0, 0, 15, 0), &mut buffer);
         assert_eq!(&buffer, &Buffer::empty(buffer.area));
 
-        let list = List::<_>::new(items)
+        let list = List::new(items, None::<&ListItem>, noop)
             .highlight_symbol(">>")
             .block(Block::bordered());
-        // attempt to render into an area of the buffer with zero height after
-        // setting the block borders
         Widget::render(list, Rect::new(0, 0, 15, 2), &mut buffer);
         #[rustfmt::skip]
         let expected = Buffer::with_lines([
@@ -410,7 +386,7 @@ mod tests {
             Lines: IntoIterator,
             Lines::Item: Into<Line<'line>>,
         {
-            let list = List::<_>::new(items.to_owned()).highlight_symbol(">>");
+            let list = List::new(items.to_owned(), None::<&ListItem>, noop).highlight_symbol(">>");
             let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 5));
             Widget::render(list, buffer.area, &mut buffer);
             assert_eq!(buffer, Buffer::with_lines(expected));
@@ -425,17 +401,19 @@ mod tests {
             Lines: IntoIterator,
             Lines::Item: Into<Line<'line>>,
         {
-            let list = List::<_>::new(items.to_owned()).highlight_symbol(">>");
-            let mut state = ListState::default().with_selected(selected);
+            let sel_item = selected.and_then(|i| items.get(i));
+            let list = List::new(items.to_owned(), sel_item, noop).highlight_symbol(">>");
+            let mut state = ListState::default();
             let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 5));
             StatefulWidget::render(list, buffer.area, &mut buffer, &mut state);
             assert_eq!(buffer, Buffer::with_lines(expected));
         }
 
-        let empty_items = Vec::new();
+        let empty_items: Vec<ListItem> = Vec::new();
         let single_item = vec!["Item 0".into()];
-        let multiple_items = vec!["Item 0".into(), "Item 1".into(), "Item 2".into()];
-        let multi_line_items = vec!["Item 0\nLine 2".into(), "Item 1".into(), "Item 2".into()];
+        let multiple_items: Vec<ListItem> = vec!["Item 0".into(), "Item 1".into(), "Item 2".into()];
+        let multi_line_items: Vec<ListItem> =
+            vec!["Item 0\nLine 2".into(), "Item 1".into(), "Item 2".into()];
 
         // empty list
         test_case_render(
@@ -504,17 +482,6 @@ mod tests {
                 "          ",
             ],
         );
-        test_case_render_stateful(
-            &single_item,
-            Some(1),
-            [
-                ">>Item 0  ",
-                "          ",
-                "          ",
-                "          ",
-                "          ",
-            ],
-        );
 
         // multiple items
         test_case_render(
@@ -562,7 +529,7 @@ mod tests {
         );
         test_case_render_stateful(
             &multiple_items,
-            Some(3),
+            Some(2),
             [
                 "  Item 0  ",
                 "  Item 1  ",
@@ -619,24 +586,16 @@ mod tests {
     }
 
     #[test]
-    fn items() {
-        let list = List::default().items(["Item 0", "Item 1", "Item 2"]);
-        let buffer = widget(list, 10, 5);
-        let expected = Buffer::with_lines([
-            "Item 0    ",
-            "Item 1    ",
-            "Item 2    ",
-            "          ",
-            "          ",
-        ]);
-        assert_eq!(buffer, expected);
-    }
-
-    #[test]
     fn empty_strings() {
-        let list = List::new(["Item 0", "", "", "Item 1", "Item 2"])
-            .block(Block::bordered().title("List"));
-        let buffer = widget(list, 10, 7);
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new(""),
+            ListItem::new(""),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop).block(Block::bordered().title("List"));
+        let buffer = render_widget(list, 10, 7);
         let expected = Buffer::with_lines([
             "┌List────┐",
             "│Item 0  │",
@@ -651,8 +610,13 @@ mod tests {
 
     #[test]
     fn block() {
-        let list = List::new(["Item 0", "Item 1", "Item 2"]).block(Block::bordered().title("List"));
-        let buffer = widget(list, 10, 7);
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop).block(Block::bordered().title("List"));
+        let buffer = render_widget(list, 10, 7);
         let expected = Buffer::with_lines([
             "┌List────┐",
             "│Item 0  │",
@@ -667,8 +631,13 @@ mod tests {
 
     #[test]
     fn style() {
-        let list = List::new(["Item 0", "Item 1", "Item 2"]).style(Style::default().fg(Color::Red));
-        let buffer = widget(list, 10, 5);
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop).style(Style::default().fg(Color::Red));
+        let buffer = render_widget(list, 10, 5);
         let expected = Buffer::with_lines([
             "Item 0    ".red(),
             "Item 1    ".red(),
@@ -681,12 +650,16 @@ mod tests {
 
     #[test]
     fn highlight_symbol_and_style() {
-        let list = List::new(["Item 0", "Item 1", "Item 2"])
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items, Some(&ListItem::new("Item 1")), noop)
             .highlight_symbol(">>")
             .highlight_style(Style::default().fg(Color::Yellow));
         let mut state = ListState::default();
-        state.select(Some(1));
-        let buffer = stateful_widget(list, &mut state, 10, 5);
+        let buffer = render_stateful(list, &mut state, 10, 5);
         let expected = Buffer::with_lines([
             "  Item 0  ".into(),
             ">>Item 1  ".yellow(),
@@ -699,12 +672,16 @@ mod tests {
 
     #[test]
     fn highlight_symbol_style_and_style() {
-        let list = List::new(["Item 0", "Item 1", "Item 2"])
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items, Some(&ListItem::new("Item 1")), noop)
             .highlight_symbol(Line::from(">>").red().bold())
             .highlight_style(Style::default().fg(Color::Yellow));
         let mut state = ListState::default();
-        state.select(Some(1));
-        let buffer = stateful_widget(list, &mut state, 10, 5);
+        let buffer = render_stateful(list, &mut state, 10, 5);
         let mut expected = Buffer::with_lines([
             "  Item 0  ".into(),
             ">>Item 1  ".yellow(),
@@ -718,11 +695,16 @@ mod tests {
 
     #[test]
     fn highlight_spacing_default_when_selected() {
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
         // when not selected
         {
-            let list = List::new(["Item 0", "Item 1", "Item 2"]).highlight_symbol(">>");
+            let list = List::new(items.clone(), None::<&ListItem>, noop).highlight_symbol(">>");
             let mut state = ListState::default();
-            let buffer = stateful_widget(list, &mut state, 10, 5);
+            let buffer = render_stateful(list, &mut state, 10, 5);
             let expected = Buffer::with_lines([
                 "Item 0    ",
                 "Item 1    ",
@@ -735,10 +717,10 @@ mod tests {
 
         // when selected
         {
-            let list = List::new(["Item 0", "Item 1", "Item 2"]).highlight_symbol(">>");
+            let list =
+                List::new(items, Some(&ListItem::new("Item 1")), noop).highlight_symbol(">>");
             let mut state = ListState::default();
-            state.select(Some(1));
-            let buffer = stateful_widget(list, &mut state, 10, 5);
+            let buffer = render_stateful(list, &mut state, 10, 5);
             let expected = Buffer::with_lines([
                 "  Item 0  ",
                 ">>Item 1  ",
@@ -752,13 +734,18 @@ mod tests {
 
     #[test]
     fn highlight_spacing_default_always() {
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
         // when not selected
         {
-            let list = List::new(["Item 0", "Item 1", "Item 2"])
+            let list = List::new(items.clone(), None::<&ListItem>, noop)
                 .highlight_symbol(">>")
                 .highlight_spacing(HighlightSpacing::Always);
             let mut state = ListState::default();
-            let buffer = stateful_widget(list, &mut state, 10, 5);
+            let buffer = render_stateful(list, &mut state, 10, 5);
             let expected = Buffer::with_lines([
                 "  Item 0  ",
                 "  Item 1  ",
@@ -771,12 +758,11 @@ mod tests {
 
         // when selected
         {
-            let list = List::new(["Item 0", "Item 1", "Item 2"])
+            let list = List::new(items, Some(&ListItem::new("Item 1")), noop)
                 .highlight_symbol(">>")
                 .highlight_spacing(HighlightSpacing::Always);
             let mut state = ListState::default();
-            state.select(Some(1));
-            let buffer = stateful_widget(list, &mut state, 10, 5);
+            let buffer = render_stateful(list, &mut state, 10, 5);
             let expected = Buffer::with_lines([
                 "  Item 0  ",
                 ">>Item 1  ",
@@ -790,13 +776,18 @@ mod tests {
 
     #[test]
     fn highlight_spacing_default_never() {
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
         // when not selected
         {
-            let list = List::new(["Item 0", "Item 1", "Item 2"])
+            let list = List::new(items.clone(), None::<&ListItem>, noop)
                 .highlight_symbol(">>")
                 .highlight_spacing(HighlightSpacing::Never);
             let mut state = ListState::default();
-            let buffer = stateful_widget(list, &mut state, 10, 5);
+            let buffer = render_stateful(list, &mut state, 10, 5);
             let expected = Buffer::with_lines([
                 "Item 0    ",
                 "Item 1    ",
@@ -809,12 +800,11 @@ mod tests {
 
         // when selected
         {
-            let list = List::new(["Item 0", "Item 1", "Item 2"])
+            let list = List::new(items, Some(&ListItem::new("Item 1")), noop)
                 .highlight_symbol(">>")
                 .highlight_spacing(HighlightSpacing::Never);
             let mut state = ListState::default();
-            state.select(Some(1));
-            let buffer = stateful_widget(list, &mut state, 10, 5);
+            let buffer = render_stateful(list, &mut state, 10, 5);
             let expected = Buffer::with_lines([
                 "Item 0    ",
                 "Item 1    ",
@@ -828,13 +818,17 @@ mod tests {
 
     #[test]
     fn repeat_highlight_symbol() {
-        let list = List::new(["Item 0\nLine 2", "Item 1", "Item 2"])
+        let items = vec![
+            ListItem::new("Item 0\nLine 2"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items, Some(&ListItem::new("Item 0\nLine 2")), noop)
             .highlight_symbol(Line::from(">>").red().bold())
             .highlight_style(Style::default().fg(Color::Yellow))
             .repeat_highlight_symbol(true);
         let mut state = ListState::default();
-        state.select(Some(0));
-        let buffer = stateful_widget(list, &mut state, 10, 5);
+        let buffer = render_stateful(list, &mut state, 10, 5);
         let mut expected = Buffer::with_lines([
             ">>Item 0  ".yellow(),
             ">>Line 2  ".yellow(),
@@ -864,15 +858,27 @@ mod tests {
         Lines: IntoIterator,
         Lines::Item: Into<Line<'line>>,
     {
-        let list = List::new(["Item 0", "Item 1", "Item 2"]).direction(direction);
-        let buffer = widget(list, 10, 4);
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop).direction(direction);
+        let buffer = render_widget(list, 10, 4);
         assert_eq!(buffer, Buffer::with_lines(expected));
     }
 
     #[test]
     fn truncate_items() {
-        let list = List::new(["Item 0", "Item 1", "Item 2", "Item 3", "Item 4"]);
-        let buffer = widget(list, 10, 3);
+        let items = vec![
+            ListItem::new("Item 0"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
+            ListItem::new("Item 3"),
+            ListItem::new("Item 4"),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 10, 3);
         #[rustfmt::skip]
         let expected = Buffer::with_lines([
             "Item 0    ",
@@ -884,11 +890,18 @@ mod tests {
 
     #[test]
     fn offset_renders_shifted() {
-        let list = List::new([
-            "Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6",
-        ]);
+        let items: Vec<ListItem> = vec![
+            "Item 0".into(),
+            "Item 1".into(),
+            "Item 2".into(),
+            "Item 3".into(),
+            "Item 4".into(),
+            "Item 5".into(),
+            "Item 6".into(),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop);
         let mut state = ListState::default().with_offset(3);
-        let buffer = stateful_widget(list, &mut state, 6, 3);
+        let buffer = render_stateful(list, &mut state, 6, 3);
 
         let expected = Buffer::with_lines(["Item 3", "Item 4", "Item 5"]);
         assert_eq!(buffer, expected);
@@ -910,26 +923,32 @@ mod tests {
         Lines: IntoIterator,
         Lines::Item: Into<Line<'line>>,
     {
-        let items = [
-            "Item 0 with a very long line that will be truncated",
-            "Item 1",
-            "Item 2",
+        let items = vec![
+            ListItem::new("Item 0 with a very long line that will be truncated"),
+            ListItem::new("Item 1"),
+            ListItem::new("Item 2"),
         ];
-        let list = List::new(items).highlight_symbol(">>");
-        let mut state = ListState::default().with_selected(selected);
-        let buffer = stateful_widget(list, &mut state, 15, 3);
+        let sel_item = selected.and_then(|i| items.get(i).cloned());
+        let list = List::new(items, sel_item.as_ref(), noop).highlight_symbol(">>");
+        let mut state = ListState::default();
+        let buffer = render_stateful(list, &mut state, 15, 3);
         assert_eq!(buffer, Buffer::with_lines(expected));
     }
 
     #[test]
     fn selected_item_ensures_selected_item_is_visible_when_offset_is_before_visible_range() {
-        let items = [
-            "Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6",
+        let items: Vec<ListItem> = vec![
+            "Item 0".into(),
+            "Item 1".into(),
+            "Item 2".into(),
+            "Item 3".into(),
+            "Item 4".into(),
+            "Item 5".into(),
+            "Item 6".into(),
         ];
-        let list = List::new(items).highlight_symbol(">>");
-        // Set the initial visible range to items 3, 4, and 5
-        let mut state = ListState::default().with_selected(Some(1)).with_offset(3);
-        let buffer = stateful_widget(list, &mut state, 10, 3);
+        let list = List::new(items, Some(&ListItem::new("Item 1")), noop).highlight_symbol(">>");
+        let mut state = ListState::default().with_offset(3);
+        let buffer = render_stateful(list, &mut state, 10, 3);
 
         #[rustfmt::skip]
         let expected = Buffer::with_lines([
@@ -939,7 +958,6 @@ mod tests {
         ]);
 
         assert_eq!(buffer, expected);
-        assert_eq!(state.selected, Some(1));
         assert_eq!(
             state.offset, 1,
             "did not scroll the selected item into view"
@@ -948,13 +966,18 @@ mod tests {
 
     #[test]
     fn selected_item_ensures_selected_item_is_visible_when_offset_is_after_visible_range() {
-        let items = [
-            "Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6",
+        let items: Vec<ListItem> = vec![
+            "Item 0".into(),
+            "Item 1".into(),
+            "Item 2".into(),
+            "Item 3".into(),
+            "Item 4".into(),
+            "Item 5".into(),
+            "Item 6".into(),
         ];
-        let list = List::new(items).highlight_symbol(">>");
-        // Set the initial visible range to items 3, 4, and 5
-        let mut state = ListState::default().with_selected(Some(6)).with_offset(3);
-        let buffer = stateful_widget(list, &mut state, 10, 3);
+        let list = List::new(items, Some(&ListItem::new("Item 6")), noop).highlight_symbol(">>");
+        let mut state = ListState::default().with_offset(3);
+        let buffer = render_stateful(list, &mut state, 10, 3);
 
         #[rustfmt::skip]
         let expected = Buffer::with_lines([
@@ -964,7 +987,6 @@ mod tests {
         ]);
 
         assert_eq!(buffer, expected);
-        assert_eq!(state.selected, Some(6));
         assert_eq!(
             state.offset, 4,
             "did not scroll the selected item into view"
@@ -974,7 +996,7 @@ mod tests {
     #[test]
     fn can_be_stylized() {
         assert_eq!(
-            List::<&str>::new(vec![])
+            List::new(vec![ListItem::new("")], None::<&ListItem>, noop)
                 .black()
                 .on_white()
                 .bold()
@@ -990,74 +1012,85 @@ mod tests {
 
     #[test]
     fn with_alignment() {
-        let list = List::new([
-            Line::from("Left").alignment(Alignment::Left),
-            Line::from("Center").alignment(Alignment::Center),
-            Line::from("Right").alignment(Alignment::Right),
-        ]);
-        let buffer = widget(list, 10, 4);
+        let items = vec![
+            ListItem::from(Line::from("Left").alignment(Alignment::Left)),
+            ListItem::from(Line::from("Center").alignment(Alignment::Center)),
+            ListItem::from(Line::from("Right").alignment(Alignment::Right)),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 10, 4);
         let expected = Buffer::with_lines(["Left      ", "  Center  ", "     Right", ""]);
         assert_eq!(buffer, expected);
     }
 
     #[test]
     fn alignment_odd_line_odd_area() {
-        let list = List::new([
-            Line::from("Odd").alignment(Alignment::Left),
-            Line::from("Even").alignment(Alignment::Center),
-            Line::from("Width").alignment(Alignment::Right),
-        ]);
-        let buffer = widget(list, 7, 4);
+        let items = vec![
+            ListItem::from(Line::from("Odd").alignment(Alignment::Left)),
+            ListItem::from(Line::from("Even").alignment(Alignment::Center)),
+            ListItem::from(Line::from("Width").alignment(Alignment::Right)),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 7, 4);
         let expected = Buffer::with_lines(["Odd    ", " Even  ", "  Width", ""]);
         assert_eq!(buffer, expected);
     }
 
     #[test]
     fn alignment_even_line_even_area() {
-        let list = List::new([
-            Line::from("Odd").alignment(Alignment::Left),
-            Line::from("Even").alignment(Alignment::Center),
-            Line::from("Width").alignment(Alignment::Right),
-        ]);
-        let buffer = widget(list, 6, 4);
+        let items = vec![
+            ListItem::from(Line::from("Odd").alignment(Alignment::Left)),
+            ListItem::from(Line::from("Even").alignment(Alignment::Center)),
+            ListItem::from(Line::from("Width").alignment(Alignment::Right)),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 6, 4);
         let expected = Buffer::with_lines(["Odd   ", " Even ", " Width", ""]);
         assert_eq!(buffer, expected);
     }
 
     #[test]
     fn alignment_odd_line_even_area() {
-        let list = List::new([
-            Line::from("Odd").alignment(Alignment::Left),
-            Line::from("Even").alignment(Alignment::Center),
-            Line::from("Width").alignment(Alignment::Right),
-        ]);
-        let buffer = widget(list, 8, 4);
+        let items = vec![
+            ListItem::from(Line::from("Odd").alignment(Alignment::Left)),
+            ListItem::from(Line::from("Even").alignment(Alignment::Center)),
+            ListItem::from(Line::from("Width").alignment(Alignment::Right)),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 8, 4);
         let expected = Buffer::with_lines(["Odd     ", "  Even  ", "   Width", ""]);
         assert_eq!(buffer, expected);
     }
 
     #[test]
     fn alignment_even_line_odd_area() {
-        let list = List::new([
-            Line::from("Odd").alignment(Alignment::Left),
-            Line::from("Even").alignment(Alignment::Center),
-            Line::from("Width").alignment(Alignment::Right),
-        ]);
-        let buffer = widget(list, 6, 4);
+        let items = vec![
+            ListItem::from(Line::from("Odd").alignment(Alignment::Left)),
+            ListItem::from(Line::from("Even").alignment(Alignment::Center)),
+            ListItem::from(Line::from("Width").alignment(Alignment::Right)),
+        ];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 6, 4);
         let expected = Buffer::with_lines(["Odd   ", " Even ", " Width", ""]);
         assert_eq!(buffer, expected);
     }
 
     #[test]
     fn alignment_zero_line_width() {
-        let list = List::new([Line::from("This line has zero width").alignment(Alignment::Center)]);
-        let buffer = widget(list, 0, 2);
+        let items = vec![ListItem::from(
+            Line::from("This line has zero width").alignment(Alignment::Center),
+        )];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 0, 2);
         assert_eq!(buffer, Buffer::with_lines([""; 2]));
     }
 
     #[test]
     fn alignment_zero_area_width() {
-        let list = List::<_>::new([Line::from("Text").alignment(Alignment::Left)]);
+        let items = vec![ListItem::from(
+            Line::from("Text").alignment(Alignment::Left),
+        )];
+        let list = List::new(items, None::<&ListItem>, noop);
         let mut buffer = Buffer::empty(Rect::new(0, 0, 4, 1));
         Widget::render(list, Rect::new(0, 0, 4, 0), &mut buffer);
         assert_eq!(buffer, Buffer::with_lines(["    "]));
@@ -1065,23 +1098,32 @@ mod tests {
 
     #[test]
     fn alignment_line_less_than_width() {
-        let list = List::new([Line::from("Small").alignment(Alignment::Center)]);
-        let buffer = widget(list, 10, 2);
+        let items = vec![ListItem::from(
+            Line::from("Small").alignment(Alignment::Center),
+        )];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 10, 2);
         let expected = Buffer::with_lines(["  Small   ", ""]);
         assert_eq!(buffer, expected);
     }
 
     #[test]
     fn alignment_line_equal_to_width() {
-        let list = List::new([Line::from("Exact").alignment(Alignment::Left)]);
-        let buffer = widget(list, 5, 2);
+        let items = vec![ListItem::from(
+            Line::from("Exact").alignment(Alignment::Left),
+        )];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 5, 2);
         assert_eq!(buffer, Buffer::with_lines(["Exact", ""]));
     }
 
     #[test]
     fn alignment_line_greater_than_width() {
-        let list = List::new([Line::from("Large line").alignment(Alignment::Left)]);
-        let buffer = widget(list, 5, 2);
+        let items = vec![ListItem::from(
+            Line::from("Large line").alignment(Alignment::Left),
+        )];
+        let list = List::new(items, None::<&ListItem>, noop);
+        let buffer = render_widget(list, 5, 2);
         assert_eq!(buffer, Buffer::with_lines(["Large", ""]));
     }
 
@@ -1183,12 +1225,18 @@ mod tests {
         Lines::Item: Into<Line<'line>>,
     {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, render_height));
-        let mut state = ListState::default();
+        let mut state = ListState::default().with_offset(offset);
 
-        *state.offset_mut() = offset;
-        state.select(selected);
-
-        let list = List::<_>::new(["Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5"])
+        let items: Vec<ListItem> = vec![
+            "Item 0".into(),
+            "Item 1".into(),
+            "Item 2".into(),
+            "Item 3".into(),
+            "Item 4".into(),
+            "Item 5".into(),
+        ];
+        let sel_item = selected.and_then(|i| items.get(i).cloned());
+        let list = List::new(items, sel_item.as_ref(), noop)
             .scroll_padding(padding)
             .highlight_symbol(">> ");
         StatefulWidget::render(list, buffer.area, &mut buffer, &mut state);
@@ -1196,20 +1244,24 @@ mod tests {
     }
 
     /// If there isn't enough room for the selected item and the requested padding the list can jump
-    /// up and down every frame if something isn't done about it. This code tests to make sure that
-    /// isn't currently happening
+    /// up and down every frame if something isn't done about it. This tests to make sure that
+    /// isn't currently happening.
     #[test]
     fn padding_flicker() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 5));
-        let mut state = ListState::default();
+        let mut state = ListState::default().with_offset(2);
 
-        *state.offset_mut() = 2;
-        state.select(Some(4));
-
-        let items = [
-            "Item 0", "Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6", "Item 7",
+        let items: Vec<ListItem> = vec![
+            "Item 0".into(),
+            "Item 1".into(),
+            "Item 2".into(),
+            "Item 3".into(),
+            "Item 4".into(),
+            "Item 5".into(),
+            "Item 6".into(),
+            "Item 7".into(),
         ];
-        let list = List::<_>::new(items)
+        let list = List::new(items, Some(&ListItem::new("Item 4")), noop)
             .scroll_padding(3)
             .highlight_symbol(">> ");
 
@@ -1226,9 +1278,8 @@ mod tests {
     #[test]
     fn padding_inconsistent_item_sizes() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 3));
-        let mut state = ListState::default().with_offset(0).with_selected(Some(3));
 
-        let items = [
+        let items = vec![
             ListItem::new("Item 0"),
             ListItem::new("Item 1"),
             ListItem::new("Item 2"),
@@ -1236,7 +1287,8 @@ mod tests {
             ListItem::new("Item 4\nTest\nTest"),
             ListItem::new("Item 5"),
         ];
-        let list = List::<_>::new(items)
+        let mut state = ListState::default().with_offset(0);
+        let list = List::new(items, Some(&ListItem::new("Item 3")), noop)
             .scroll_padding(1)
             .highlight_symbol(">> ");
 
@@ -1251,23 +1303,18 @@ mod tests {
         assert_eq!(buffer, Buffer::with_lines(expected));
     }
 
-    // Tests to make sure when it's pushing back the first visible index value that it doesn't
-    // include an item that's too large
     #[test]
     fn padding_offset_pushback_break() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 4));
-        let mut state = ListState::default();
+        let mut state = ListState::default().with_offset(1);
 
-        *state.offset_mut() = 1;
-        state.select(Some(2));
-
-        let items = [
+        let items = vec![
             ListItem::new("Item 0\nTest\nTest"),
             ListItem::new("Item 1"),
             ListItem::new("Item 2"),
             ListItem::new("Item 3"),
         ];
-        let list = List::<_>::new(items)
+        let list = List::new(items, Some(&ListItem::new("Item 2")), noop)
             .scroll_padding(2)
             .highlight_symbol(">> ");
 
@@ -1288,18 +1335,19 @@ mod tests {
     ///
     /// See [#949](https://github.com/ratatui/ratatui/pull/949) for details
     #[rstest]
-    #[case::under(">>>>", "Item1", ">>>>Item1 ")] // enough space to render the highlight symbol
-    #[case::exact(">>>>>", "Item1", ">>>>>Item1")] // exact space to render the highlight symbol
-    #[case::overflow(">>>>>>", "Item1", ">>>>>>Item")] // not enough space
+    #[case::under(">>>>", "Item1", ">>>>Item1 ")]
+    #[case::exact(">>>>>", "Item1", ">>>>>Item1")]
+    #[case::overflow(">>>>>>", "Item1", ">>>>>>Item")]
     fn highlight_symbol_overflow(
         #[case] highlight_symbol: &str,
         #[case] item: &str,
         #[case] expected: &str,
         mut single_line_buf: Buffer,
     ) {
-        let list = List::<_>::new([item]).highlight_symbol(highlight_symbol);
+        let items = vec![ListItem::new(item)];
+        let list =
+            List::new(items, Some(&ListItem::new(item)), noop).highlight_symbol(highlight_symbol);
         let mut state = ListState::default();
-        state.select(Some(0));
         StatefulWidget::render(list, single_line_buf.area, &mut single_line_buf, &mut state);
         assert_eq!(single_line_buf, Buffer::with_lines([expected]));
     }

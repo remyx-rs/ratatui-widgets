@@ -1,8 +1,9 @@
 //! The [`Table`] widget is used to display multiple rows and columns in a grid and allows selecting
-//! one or multiple cells.
+//! a row.
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::borrow::Borrow;
 use core::hash::{Hash, Hasher};
 
 use itertools::Itertools;
@@ -27,8 +28,8 @@ mod state;
 ///
 /// A `Table` is a collection of [`Row`]s, each composed of [`Cell`]s:
 ///
-/// You can construct a [`Table`] using either [`Table::new`] or [`Table::default`] and then chain
-/// builder style methods to set the desired properties.
+/// You can construct a [`Table`] using [`Table::new`] and then chain builder style methods to set
+/// the desired properties.
 ///
 /// Table cells can be aligned, for more details see [`Cell`].
 ///
@@ -38,12 +39,11 @@ mod state;
 /// [`Table`] implements [`Widget`] and so it can be drawn using `Frame::render_widget`.
 ///
 /// [`Table`] is also a [`StatefulWidget`], which means you can use it with [`TableState`] to allow
-/// the user to scroll through the rows and select one of them. When rendering a [`Table`] with a
-/// [`TableState`], the selected row, column and cell will be highlighted. If the selected row is
-/// not visible (based on the offset), the table will be scrolled to make the selected row visible.
+/// the user to scroll through the rows. When rendering a [`Table`] with a [`TableState`], the
+/// selected row will be highlighted. If the selected row is not visible (based on the offset), the
+/// table will be scrolled to make the selected row visible.
 ///
 /// Note: if the `widths` field is empty, the table will be rendered with equal widths.
-/// Note: Highlight styles are applied in the following order: Row, Column, Cell.
 ///
 /// See the table example and the recipe and traceroute tabs in the demo2 example in the [Examples]
 /// directory for a more in depth example of the various configuration options and for how to handle
@@ -54,13 +54,13 @@ mod state;
 /// # Constructor methods
 ///
 /// - [`Table::new`] creates a new [`Table`] with the given rows.
-/// - [`Table::default`] creates an empty [`Table`]. You can then add rows using [`Table::rows`].
+/// - [`Table::new`] creates a new [`Table`] with the given items, widths, optional selection, and
+///   `on_select` callback.
 ///
 /// # Setter methods
 ///
 /// These methods are fluent setters. They return a new `Table` with the specified property set.
 ///
-/// - [`Table::rows`] sets the rows of the [`Table`].
 /// - [`Table::header`] sets the header row of the [`Table`].
 /// - [`Table::footer`] sets the footer row of the [`Table`].
 /// - [`Table::widths`] sets the width constraints of each column.
@@ -68,8 +68,6 @@ mod state;
 /// - [`Table::block`] wraps the table in a [`Block`] widget.
 /// - [`Table::style`] sets the base style of the widget.
 /// - [`Table::row_highlight_style`] sets the style of the selected row.
-/// - [`Table::column_highlight_style`] sets the style of the selected column.
-/// - [`Table::cell_highlight_style`] sets the style of the selected cell.
 /// - [`Table::highlight_symbol`] sets the symbol to be displayed in front of the selected row.
 /// - [`Table::highlight_spacing`] sets when to show the highlight spacing.
 ///
@@ -103,10 +101,8 @@ mod state;
 ///     .footer(Row::new(vec!["Updated on Dec 28"]))
 ///     // As any other widget, a Table can be wrapped in a Block.
 ///     .block(Block::new().title("Table"))
-///     // The selected row, column, cell and its content can also be styled.
+///     // The selected row can also be styled.
 ///     .row_highlight_style(Style::new().reversed())
-///     .column_highlight_style(Style::new().red())
-///     .cell_highlight_style(Style::new().blue())
 ///     // ...and potentially show a symbol in front of the selection.
 ///     .highlight_symbol(">>");
 /// ```
@@ -231,15 +227,16 @@ mod state;
 ///
 /// [`Stylize`]: ratatui_core::style::Stylize
 #[derive(Debug, Clone)]
-pub struct Table<'a, Item = Row<'a>, Message = ()>
+pub struct Table<'a, Item = Row<'a>, Items = Vec<Item>, Message = ()>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
 {
-    /// User-provided items, retained so they can be passed back to the `on_select` callback
-    items: Vec<Item>,
+    /// The items in the table
+    items: Items,
 
-    /// Data to display in each row (built from `items` for rendering)
-    rows: Vec<Row<'a>>,
+    /// Precomputed index of the selected row
+    selected: Option<usize>,
 
     /// Optional header
     header: Option<Row<'a>>,
@@ -262,12 +259,6 @@ where
     /// Style used to render the selected row
     row_highlight_style: Style,
 
-    /// Style used to render the selected column
-    column_highlight_style: Style,
-
-    /// Style used to render the selected cell
-    cell_highlight_style: Style,
-
     /// Symbol in front of the selected row
     highlight_symbol: Text<'a>,
 
@@ -278,7 +269,7 @@ where
     flex: Flex,
 
     /// Callback invoked when a row is selected
-    on_select: Option<fn(&Item) -> Message>,
+    on_select: fn(&Item) -> Message,
 
     /// Callback invoked when a row is submitted (e.g. Enter key)
     on_submit: Option<fn(&Item) -> Message>,
@@ -287,41 +278,14 @@ where
     pub(crate) focus: bool,
 }
 
-impl<'a, Item, Message> Default for Table<'a, Item, Message>
+impl<'a, Item, Items, Message> PartialEq for Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
-{
-    fn default() -> Self {
-        Self {
-            items: Vec::new(),
-            rows: Vec::new(),
-            header: None,
-            footer: None,
-            widths: Vec::new(),
-            column_spacing: 1,
-            block: None,
-            style: Style::new(),
-            row_highlight_style: Style::new(),
-            column_highlight_style: Style::new(),
-            cell_highlight_style: Style::new(),
-            highlight_symbol: Text::default(),
-            highlight_spacing: HighlightSpacing::default(),
-            flex: Flex::Start,
-            on_select: None,
-            on_submit: None,
-            focus: false,
-        }
-    }
-}
-
-impl<'a, Item, Message> PartialEq for Table<'a, Item, Message>
-where
-    Item: Clone + Into<Row<'a>> + PartialEq,
-    Message: PartialEq,
+    Items: Borrow<[Item]> + PartialEq + 'a,
+    Item: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         self.items == other.items
-            && self.rows == other.rows
+            && self.selected == other.selected
             && self.header == other.header
             && self.footer == other.footer
             && self.widths == other.widths
@@ -329,8 +293,6 @@ where
             && self.block == other.block
             && self.style == other.style
             && self.row_highlight_style == other.row_highlight_style
-            && self.column_highlight_style == other.column_highlight_style
-            && self.cell_highlight_style == other.cell_highlight_style
             && self.highlight_symbol == other.highlight_symbol
             && self.highlight_spacing == other.highlight_spacing
             && self.flex == other.flex
@@ -338,21 +300,21 @@ where
     }
 }
 
-impl<'a, Item, Message> Eq for Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Eq for Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>> + Eq,
-    Message: Eq,
+    Items: Borrow<[Item]> + Eq + 'a,
+    Item: PartialEq + Eq,
 {
 }
 
-impl<'a, Item, Message> Hash for Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Hash for Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>> + Hash,
-    Message: Hash,
+    Items: Borrow<[Item]> + Hash + 'a,
+    Item: PartialEq + Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.items.hash(state);
-        self.rows.hash(state);
+        self.selected.hash(state);
         self.header.hash(state);
         self.footer.hash(state);
         self.widths.hash(state);
@@ -360,83 +322,87 @@ where
         self.block.hash(state);
         self.style.hash(state);
         self.row_highlight_style.hash(state);
-        self.column_highlight_style.hash(state);
-        self.cell_highlight_style.hash(state);
         self.highlight_symbol.hash(state);
         self.highlight_spacing.hash(state);
         self.flex.hash(state);
     }
 }
 
-impl<'a, Item, Message> Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
 {
-    /// Creates a new [`Table`] widget with the given rows.
+    /// Creates a new [`Table`] widget.
     ///
-    /// The `rows` parameter accepts any value that can be converted into an iterator of [`Row`]s.
-    /// This includes arrays, slices, and [`Vec`]s.
+    /// The `items` parameter accepts any type that implements `Borrow<[Item]>`, such as
+    /// `Vec<Item>`, `&[Item]`, or other collection types.
     ///
     /// The `widths` parameter accepts any type that implements `IntoIterator<Item =
-    /// Into<Constraint>>`. This includes arrays, slices, vectors, iterators. `Into<Constraint>` is
-    /// implemented on u16, so you can pass an array, vec, etc. of u16 to this function to create a
-    /// table with fixed width columns.
+    /// Into<Constraint>>`.
     ///
-    /// # Examples
+    /// The `selected` parameter is an optional reference to the currently selected item.
+    /// Its index is computed by searching `items` for an equal element.
     ///
-    /// ```rust
-    /// use ratatui::layout::Constraint;
-    /// use ratatui::widgets::{Row, Table};
-    ///
-    /// let rows = [
-    ///     Row::new(vec!["Cell1", "Cell2"]),
-    ///     Row::new(vec!["Cell3", "Cell4"]),
-    /// ];
-    /// let widths = [Constraint::Length(5), Constraint::Length(5)];
-    /// let table = Table::new(rows, widths);
-    /// ```
-    pub fn new<C>(items: impl Into<Vec<Item>>, widths: C) -> Self
+    /// The `on_select` callback is invoked when a row is selected.
+    pub fn new<C, S>(
+        items: Items,
+        widths: C,
+        selected: Option<S>,
+        on_select: fn(&Item) -> Message,
+    ) -> Self
     where
         C: IntoIterator,
         C::Item: Into<Constraint>,
+        S: Borrow<Item>,
     {
         let widths = widths.into_iter().map(Into::into).collect_vec();
         ensure_percentages_less_than_100(&widths);
 
-        let items = items.into();
-        let rows = items.iter().cloned().map(Item::into).collect();
+        let selected_index =
+            selected.and_then(|s| items.borrow().iter().position(|item| item == s.borrow()));
         Self {
             items,
-            rows,
+            selected: selected_index,
+            header: None,
+            footer: None,
             widths,
-            ..Default::default()
+            column_spacing: 1,
+            block: None,
+            style: Style::new(),
+            row_highlight_style: Style::new(),
+            highlight_symbol: Text::default(),
+            highlight_spacing: HighlightSpacing::default(),
+            flex: Flex::Start,
+            on_select,
+            on_submit: None,
+            focus: false,
         }
     }
 
     /// Returns the number of items in the table.
     pub fn len(&self) -> usize {
-        self.items.len()
+        self.items.borrow().len()
     }
 
     /// Returns true if the table contains no items.
     pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
+        self.items.borrow().is_empty()
     }
 
     /// Returns the table items as a slice.
-    pub fn items_as_slice(&self) -> &[Item] {
-        self.items.as_slice()
+    pub fn items(&self) -> &[Item] {
+        self.items.borrow()
     }
 
-    /// Returns the current `on_select` callback, if set.
-    pub fn on_select_ref(&self) -> Option<fn(&Item) -> Message> {
+    /// Returns the precomputed index of the selected row, if any.
+    pub fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
+    /// Returns the current `on_select` callback.
+    pub fn on_select_fn(&self) -> fn(&Item) -> Message {
         self.on_select
-    }
-
-    /// Sets a callback to be invoked when a row is selected.
-    pub fn on_select(mut self, f: fn(&Item) -> Message) -> Self {
-        self.on_select = Some(f);
-        self
     }
 
     /// Returns the current `on_submit` callback, if set.
@@ -459,38 +425,14 @@ where
     }
 
     /// Returns an iterator over the rendered height of each row, margins included.
-    pub fn row_heights(&self) -> impl Iterator<Item = u16> + '_ {
-        self.rows.iter().map(Row::height_with_margin)
-    }
-
-    /// Set the rows
-    ///
-    /// The `rows` parameter accepts any value that can be converted into an iterator of [`Row`]s.
-    /// This includes arrays, slices, and [`Vec`]s.
-    ///
-    /// # Warning
-    ///
-    /// This method does not currently set the column widths. You will need to set them manually by
-    /// calling [`Table::widths`].
-    ///
-    /// This is a fluent setter method which must be chained or used as it consumes self
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use ratatui::widgets::{Row, Table};
-    ///
-    /// let rows = [
-    ///     Row::new(vec!["Cell1", "Cell2"]),
-    ///     Row::new(vec!["Cell3", "Cell4"]),
-    /// ];
-    /// let table = Table::default().rows(rows);
-    /// ```
-    #[must_use = "method moves the value of self and returns the modified value"]
-    pub fn rows(mut self, items: impl Into<Vec<Item>>) -> Self {
-        self.items = items.into();
-        self.rows = self.items.iter().cloned().map(Item::into).collect();
-        self
+    pub fn row_heights(&self) -> impl Iterator<Item = u16> + '_
+    where
+        for<'b> Row<'a>: From<&'b Item>,
+    {
+        self.items.borrow().iter().map(|item| {
+            let row: Row<'a> = Row::from(item);
+            row.height_with_margin()
+        })
     }
 
     /// Sets the header row
@@ -498,18 +440,6 @@ where
     /// The `header` parameter is a [`Row`] which will be displayed at the top of the [`Table`]
     ///
     /// This is a fluent setter method which must be chained or used as it consumes self
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use ratatui::widgets::{Cell, Row, Table};
-    ///
-    /// let header = Row::new(vec![
-    ///     Cell::from("Header Cell 1"),
-    ///     Cell::from("Header Cell 2"),
-    /// ]);
-    /// let table = Table::default().header(header);
-    /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
     pub fn header(mut self, header: Row<'a>) -> Self {
         self.header = Some(header);
@@ -521,18 +451,6 @@ where
     /// The `footer` parameter is a [`Row`] which will be displayed at the bottom of the [`Table`]
     ///
     /// This is a fluent setter method which must be chained or used as it consumes self
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use ratatui::widgets::{Cell, Row, Table};
-    ///
-    /// let footer = Row::new(vec![
-    ///     Cell::from("Footer Cell 1"),
-    ///     Cell::from("Footer Cell 2"),
-    /// ]);
-    /// let table = Table::default().footer(footer);
-    /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
     pub fn footer(mut self, footer: Row<'a>) -> Self {
         self.footer = Some(footer);
@@ -552,16 +470,14 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```ignore
     /// use ratatui::layout::Constraint;
-    /// use ratatui::widgets::{Cell, Row, Table};
+    /// use ratatui::widgets::{Row, Table};
     ///
-    /// let table = Table::default().widths([Constraint::Length(5), Constraint::Length(5)]);
-    /// let table = Table::default().widths(vec![Constraint::Length(5); 2]);
-    ///
-    /// // widths could also be computed at runtime
-    /// let widths = [10, 10, 20].into_iter().map(|c| Constraint::Length(c));
-    /// let table = Table::default().widths(widths);
+    /// // widths can be an array, vec, or iterator of constraints
+    /// let rows = vec![Row::new(vec!["A", "B"])];
+    /// let table = Table::new(rows, [Constraint::Length(5); 2], None::<&Row>, |_| ())
+    ///     .widths([Constraint::Length(10), Constraint::Length(10)]);
     /// ```
     #[must_use = "method moves the value of self and returns the modified value"]
     pub fn widths<I>(mut self, widths: I) -> Self
@@ -716,56 +632,6 @@ where
         self
     }
 
-    /// Set the style of the selected column
-    ///
-    /// `style` accepts any type that is convertible to [`Style`] (e.g. [`Style`], [`Color`], or
-    /// your own type that implements [`Into<Style>`]).
-    ///
-    /// This style will be applied to the entire column, and will override any style set on the
-    /// row or on the individual cells.
-    ///
-    /// This is a fluent setter method which must be chained or used as it consumes self
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use ratatui::{layout::Constraint, style::{Style, Stylize}, widgets::{Row, Table}};
-    /// # let rows = [Row::new(vec!["Cell1", "Cell2"])];
-    /// # let widths = [Constraint::Length(5), Constraint::Length(5)];
-    /// let table = Table::new(rows, widths).column_highlight_style(Style::new().red().italic());
-    /// ```
-    /// [`Color`]: ratatui_core::style::Color
-    #[must_use = "method moves the value of self and returns the modified value"]
-    pub fn column_highlight_style<S: Into<Style>>(mut self, highlight_style: S) -> Self {
-        self.column_highlight_style = highlight_style.into();
-        self
-    }
-
-    /// Set the style of the selected cell
-    ///
-    /// `style` accepts any type that is convertible to [`Style`] (e.g. [`Style`], [`Color`], or
-    /// your own type that implements [`Into<Style>`]).
-    ///
-    /// This style will be applied to the selected cell, and will override any style set on the
-    /// row or on the individual cells.
-    ///
-    /// This is a fluent setter method which must be chained or used as it consumes self
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # use ratatui::{layout::Constraint, style::{Style, Stylize}, widgets::{Row, Table}};
-    /// # let rows = [Row::new(vec!["Cell1", "Cell2"])];
-    /// # let widths = [Constraint::Length(5), Constraint::Length(5)];
-    /// let table = Table::new(rows, widths).cell_highlight_style(Style::new().red().italic());
-    /// ```
-    /// [`Color`]: ratatui_core::style::Color
-    #[must_use = "method moves the value of self and returns the modified value"]
-    pub fn cell_highlight_style<S: Into<Style>>(mut self, highlight_style: S) -> Self {
-        self.cell_highlight_style = highlight_style.into();
-        self
-    }
-
     /// Set the symbol to be displayed in front of the selected row
     ///
     /// This is a fluent setter method which must be chained or used as it consumes self
@@ -850,18 +716,22 @@ where
     }
 }
 
-impl<'a, Item, Message> Widget for Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Widget for Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> Row<'a>: From<&'b Item>,
 {
     fn render(self, area: Rect, buf: &mut Buffer) {
         Widget::render(&self, area, buf);
     }
 }
 
-impl<'a, Item, Message> Widget for &Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Widget for &Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> Row<'a>: From<&'b Item>,
 {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut state = TableState::default();
@@ -869,9 +739,11 @@ where
     }
 }
 
-impl<'a, Item, Message> StatefulWidget for Table<'a, Item, Message>
+impl<'a, Item, Items, Message> StatefulWidget for Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> Row<'a>: From<&'b Item>,
 {
     type State = TableState;
 
@@ -880,9 +752,11 @@ where
     }
 }
 
-impl<'a, Item, Message> StatefulWidget for &Table<'a, Item, Message>
+impl<'a, Item, Items, Message> StatefulWidget for &Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> Row<'a>: From<&'b Item>,
 {
     type State = TableState;
 
@@ -894,38 +768,160 @@ where
             return;
         }
 
-        if state.selected.is_some_and(|s| s >= self.rows.len()) {
-            state.select(Some(self.rows.len().saturating_sub(1)));
-        }
+        let items_len = self.items.borrow().len();
 
-        if self.rows.is_empty() {
-            state.select(None);
-        }
+        // If the selected index is out of bounds, clamp to the last item
+        let selected = if self.selected.is_some_and(|s| s >= items_len) {
+            Some(items_len.saturating_sub(1))
+        } else {
+            self.selected
+        };
 
         let column_count = self.column_count();
-        if state.selected_column.is_some_and(|s| s >= column_count) {
-            state.select_column(Some(column_count.saturating_sub(1)));
-        }
-        if column_count == 0 {
-            state.select_column(None);
-        }
 
-        let selection_width = self.selection_width(state);
+        let selection_width = self.selection_width(selected);
         let column_widths = self.get_column_widths(table_area.width, selection_width, column_count);
         let (header_area, rows_area, footer_area) = self.layout(table_area);
 
         self.render_header(header_area, buf, &column_widths);
 
-        self.render_rows(rows_area, buf, selection_width, state, &column_widths);
+        self.render_rows(
+            selected,
+            rows_area,
+            buf,
+            selection_width,
+            state,
+            &column_widths,
+        );
 
         self.render_footer(footer_area, buf, &column_widths);
     }
 }
 
 // private methods for rendering
-impl<'a, Item, Message> Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
+    for<'b> Row<'a>: From<&'b Item>,
+{
+    /// Returns the `Row` at the given index by converting from the underlying item.
+    fn row_at(&self, index: usize) -> Row<'a> {
+        Row::from(&self.items.borrow()[index])
+    }
+
+    fn column_count(&self) -> usize {
+        let items_slice = self.items.borrow();
+        let max_from_items = (0..items_slice.len())
+            .map(|i| self.row_at(i).cells.len())
+            .max()
+            .unwrap_or_default();
+
+        let max_from_header = self.header.as_ref().map_or(0, |h| h.cells.len());
+        let max_from_footer = self.footer.as_ref().map_or(0, |f| f.cells.len());
+
+        max_from_items.max(max_from_header).max(max_from_footer)
+    }
+
+    fn render_rows(
+        &self,
+        selected: Option<usize>,
+        area: Rect,
+        buf: &mut Buffer,
+        selection_width: u16,
+        state: &mut TableState,
+        columns_widths: &[Rect],
+    ) {
+        let items_len = self.items.borrow().len();
+        if items_len == 0 {
+            return;
+        }
+
+        let (start_index, end_index) = self.visible_rows(selected, state, area);
+        state.offset = start_index;
+
+        let mut y_offset = 0;
+
+        for i in start_index..end_index {
+            let row = self.row_at(i);
+
+            let y = area.y + y_offset + row.top_margin;
+            let height = (y + row.height).min(area.bottom()).saturating_sub(y);
+            let row_area = Rect { y, height, ..area };
+            buf.set_style(row_area, row.style);
+
+            let is_selected = selected.is_some_and(|index| index == i);
+            if selection_width > 0 && is_selected {
+                self.set_selection_style(buf, selection_width, row_area, &row);
+            }
+            self.render_row_cells(buf, columns_widths.iter().collect(), &row.cells, row_area);
+            if is_selected {
+                buf.set_style(row_area, self.row_highlight_style);
+            }
+            y_offset += row.height_with_margin();
+        }
+    }
+
+    /// Return the indexes of the visible rows.
+    ///
+    /// The algorithm works as follows:
+    /// - start at the offset and calculate the height of the rows that can be displayed within the
+    ///   area.
+    /// - if the selected row is not visible, scroll the table to ensure it is visible.
+    /// - if there is still space to fill then there's a partial row at the end which should be
+    ///   included in the view.
+    fn visible_rows(
+        &self,
+        selected: Option<usize>,
+        state: &TableState,
+        area: Rect,
+    ) -> (usize, usize) {
+        let items_len = self.items.borrow().len();
+        let last_row = items_len.saturating_sub(1);
+        let mut start = state.offset.min(last_row);
+
+        if let Some(selected) = selected {
+            start = start.min(selected);
+        }
+
+        let mut end = start;
+        let mut height = 0;
+
+        for i in start..items_len {
+            let row = self.row_at(i);
+            if height + row.height > area.height {
+                break;
+            }
+            height += row.height_with_margin();
+            end += 1;
+        }
+
+        if let Some(selected) = selected {
+            let selected = selected.min(last_row);
+
+            while selected >= end {
+                height = height.saturating_add(self.row_at(end).height_with_margin());
+                end += 1;
+                while height > area.height {
+                    height = height.saturating_sub(self.row_at(start).height_with_margin());
+                    start += 1;
+                }
+            }
+        }
+
+        if height < area.height && end < items_len {
+            end += 1;
+        }
+
+        (start, end)
+    }
+}
+
+// private methods for rendering that don't require item-to-row conversion
+impl<'a, Item, Items, Message> Table<'a, Item, Items, Message>
+where
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
 {
     /// Splits the table area into a header, rows area and a footer
     fn layout(&self, area: Rect) -> (Rect, Rect, Rect) {
@@ -976,78 +972,6 @@ where
                 let area_to_render = Rect::new(new_x, area.y, cell_area.width, area.height);
                 cell.render(area_to_render, buf);
             }
-        }
-    }
-
-    /// Render the table rows
-    ///
-    /// The `x` and `width` fields of each `Rect` in `column_widths` denote the starting
-    /// x-coordinate and width of each column in the table.
-    fn render_rows(
-        &self,
-        area: Rect,
-        buf: &mut Buffer,
-        selection_width: u16,
-        state: &mut TableState,
-        columns_widths: &[Rect],
-    ) {
-        if self.rows.is_empty() {
-            return;
-        }
-
-        let (start_index, end_index) = self.visible_rows(state, area);
-        state.offset = start_index;
-
-        let mut y_offset = 0;
-
-        let mut selected_row_area = None;
-        for (i, row) in self
-            .rows
-            .iter()
-            .enumerate()
-            .skip(start_index)
-            .take(end_index - start_index)
-        {
-            let y = area.y + y_offset + row.top_margin;
-            let height = (y + row.height).min(area.bottom()).saturating_sub(y);
-            let row_area = Rect { y, height, ..area };
-            buf.set_style(row_area, row.style);
-
-            let is_selected = state.selected.is_some_and(|index| index == i);
-            if selection_width > 0 && is_selected {
-                self.set_selection_style(buf, selection_width, row_area, row);
-            }
-            self.render_row_cells(buf, columns_widths.iter().collect(), &row.cells, row_area);
-            if is_selected {
-                selected_row_area = Some(row_area);
-            }
-            y_offset += row.height_with_margin();
-        }
-
-        let selected_column_area = state.selected_column.and_then(|s| {
-            // The selection is clamped by the column count. Since a user can manually specify an
-            // incorrect number of widths, we should use panic free methods.
-            columns_widths.get(s).map(|cell_area| Rect {
-                x: cell_area.x + area.x,
-                width: cell_area.width,
-                ..area
-            })
-        });
-
-        match (selected_row_area, selected_column_area) {
-            (Some(row_area), Some(col_area)) => {
-                buf.set_style(row_area, self.row_highlight_style);
-                buf.set_style(col_area, self.column_highlight_style);
-                let cell_area = row_area.intersection(col_area);
-                buf.set_style(cell_area, self.cell_highlight_style);
-            }
-            (Some(row_area), None) => {
-                buf.set_style(row_area, self.row_highlight_style);
-            }
-            (None, Some(col_area)) => {
-                buf.set_style(col_area, self.column_highlight_style);
-            }
-            (None, None) => (),
         }
     }
 
@@ -1128,55 +1052,6 @@ where
         Some(Rect::new(first.x, first.y, width, 1))
     }
 
-    /// Return the indexes of the visible rows.
-    ///
-    /// The algorithm works as follows:
-    /// - start at the offset and calculate the height of the rows that can be displayed within the
-    ///   area.
-    /// - if the selected row is not visible, scroll the table to ensure it is visible.
-    /// - if there is still space to fill then there's a partial row at the end which should be
-    ///   included in the view.
-    fn visible_rows(&self, state: &TableState, area: Rect) -> (usize, usize) {
-        let last_row = self.rows.len().saturating_sub(1);
-        let mut start = state.offset.min(last_row);
-
-        if let Some(selected) = state.selected {
-            start = start.min(selected);
-        }
-
-        let mut end = start;
-        let mut height = 0;
-
-        for item in self.rows.iter().skip(start) {
-            if height + item.height > area.height {
-                break;
-            }
-            height += item.height_with_margin();
-            end += 1;
-        }
-
-        if let Some(selected) = state.selected {
-            let selected = selected.min(last_row);
-
-            // scroll down until the selected row is visible
-            while selected >= end {
-                height = height.saturating_add(self.rows[end].height_with_margin());
-                end += 1;
-                while height > area.height {
-                    height = height.saturating_sub(self.rows[start].height_with_margin());
-                    start += 1;
-                }
-            }
-        }
-
-        // Include a partial row if there is space
-        if height < area.height && end < self.rows.len() {
-            end += 1;
-        }
-
-        (start, end)
-    }
-
     /// Get all offsets and widths of all user specified columns.
     ///
     /// Returns (x, width). When self.widths is empty, it is assumed `.widths()` has not been called
@@ -1207,20 +1082,8 @@ where
             .collect()
     }
 
-    fn column_count(&self) -> usize {
-        self.rows
-            .iter()
-            .chain(self.footer.iter())
-            .chain(self.header.iter())
-            .map(|r| r.cells.len())
-            .max()
-            .unwrap_or_default()
-    }
-
-    /// Returns the width of the selection column if a row is selected, or the `highlight_spacing`
-    /// is set to show the column always, otherwise 0.
-    fn selection_width(&self, state: &TableState) -> u16 {
-        let has_selection = state.selected.is_some();
+    fn selection_width(&self, selected: Option<usize>) -> u16 {
+        let has_selection = selected.is_some();
         if self.highlight_spacing.should_add(has_selection) {
             self.highlight_symbol.width() as u16
         } else {
@@ -1240,9 +1103,10 @@ fn ensure_percentages_less_than_100(widths: &[Constraint]) {
     }
 }
 
-impl<'a, Item, Message> Styled for Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Styled for Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
 {
     type Item = Self;
 
@@ -1255,42 +1119,48 @@ where
     }
 }
 
-impl<'a, Item, Message> FromIterator<Item> for Table<'a, Item, Message>
-where
-    Item: Clone + Into<Row<'a>>,
-{
-    /// Collects an iterator of rows into a table.
-    ///
-    /// When collecting from an iterator into a table, the user must provide the widths using
-    /// `Table::widths` after construction.
-    fn from_iter<Iter: IntoIterator<Item = Item>>(rows: Iter) -> Self {
-        let items: Vec<Item> = rows.into_iter().collect();
-        let widths: [Constraint; 0] = [];
-        Self::new(items, widths)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::string::ToString;
-    use alloc::{format, vec};
+    use alloc::vec;
 
     use ratatui_core::layout::Constraint::*;
     use ratatui_core::style::{Color, Modifier, Style, Stylize};
     use ratatui_core::text::Line;
-    use rstest::{fixture, rstest};
+    use rstest::rstest;
 
     use super::*;
     use crate::table::Cell;
 
-    type Table<'a> = super::Table<'a, Row<'a>, ()>;
+    fn noop(_: &Row) -> () {}
+
+    fn table<'a>(
+        rows: Vec<Row<'a>>,
+        widths: impl IntoIterator<Item = impl Into<Constraint>>,
+    ) -> Table<'a, Row<'a>, Vec<Row<'a>>> {
+        Table::new(rows, widths, None::<&Row>, noop)
+    }
+
+    fn table_with_selection<'a>(
+        rows: Vec<Row<'a>>,
+        widths: impl IntoIterator<Item = impl Into<Constraint>>,
+        selected: Option<usize>,
+    ) -> Table<'a, Row<'a>, Vec<Row<'a>>> {
+        let selected_row = selected.map(|i| rows[i].clone());
+        Table::new(rows, widths, selected_row.as_ref(), noop)
+    }
+
+    fn empty_table<'a>(
+        widths: impl IntoIterator<Item = impl Into<Constraint>>,
+    ) -> Table<'a, Row<'a>, Vec<Row<'a>>> {
+        Table::new(Vec::<Row>::new(), widths, None::<&Row>, noop)
+    }
 
     #[test]
     fn new() {
-        let rows = [Row::new(vec![Cell::from("")])];
+        let rows = vec![Row::new(vec![Cell::from("")])];
         let widths = [Constraint::Percentage(100)];
-        let table = Table::new(rows.clone(), widths);
-        assert_eq!(table.rows, rows);
+        let table = table(rows, widths);
         assert_eq!(table.header, None);
         assert_eq!(table.footer, None);
         assert_eq!(table.widths, widths);
@@ -1304,94 +1174,41 @@ mod tests {
     }
 
     #[test]
-    fn default() {
-        let table = Table::default();
-        assert_eq!(table.rows, []);
-        assert_eq!(table.header, None);
-        assert_eq!(table.footer, None);
-        assert_eq!(table.widths, []);
-        assert_eq!(table.column_spacing, 1);
-        assert_eq!(table.block, None);
-        assert_eq!(table.style, Style::default());
-        assert_eq!(table.row_highlight_style, Style::default());
-        assert_eq!(table.highlight_symbol, Text::default());
-        assert_eq!(table.highlight_spacing, HighlightSpacing::WhenSelected);
-        assert_eq!(table.flex, Flex::Start);
-    }
-
-    #[test]
-    fn collect() {
-        let table = (0..4)
-            .map(|i| -> Row { (0..4).map(|j| format!("{i}*{j} = {}", i * j)).collect() })
-            .collect::<Table>()
-            .widths([Constraint::Percentage(25); 4]);
-
-        let expected_rows: Vec<Row> = vec![
-            Row::new(["0*0 = 0", "0*1 = 0", "0*2 = 0", "0*3 = 0"]),
-            Row::new(["1*0 = 0", "1*1 = 1", "1*2 = 2", "1*3 = 3"]),
-            Row::new(["2*0 = 0", "2*1 = 2", "2*2 = 4", "2*3 = 6"]),
-            Row::new(["3*0 = 0", "3*1 = 3", "3*2 = 6", "3*3 = 9"]),
-        ];
-
-        assert_eq!(table.rows, expected_rows);
-        assert_eq!(table.widths, [Constraint::Percentage(25); 4]);
-    }
-
-    #[test]
     fn widths() {
-        let table = Table::default().widths([Constraint::Length(100)]);
+        let table = empty_table([Constraint::Length(100)]);
         assert_eq!(table.widths, [Constraint::Length(100)]);
 
-        // ensure that code that uses &[] continues to work as there is a large amount of code that
-        // uses this pattern
-        #[expect(clippy::needless_borrows_for_generic_args)]
-        let table = Table::default().widths(&[Constraint::Length(100)]);
+        let table = empty_table(vec![Constraint::Length(100)]);
         assert_eq!(table.widths, [Constraint::Length(100)]);
 
-        let table = Table::default().widths(vec![Constraint::Length(100)]);
+        let table = empty_table([100].into_iter().map(Constraint::Length));
         assert_eq!(table.widths, [Constraint::Length(100)]);
-
-        // ensure that code that uses &some_vec continues to work as there is a large amount of code
-        // that uses this pattern
-        #[expect(clippy::needless_borrows_for_generic_args)]
-        let table = Table::default().widths(&vec![Constraint::Length(100)]);
-        assert_eq!(table.widths, [Constraint::Length(100)]);
-
-        let table = Table::default().widths([100].into_iter().map(Constraint::Length));
-        assert_eq!(table.widths, [Constraint::Length(100)]);
-    }
-
-    #[test]
-    fn rows() {
-        let rows = [Row::new(vec![Cell::from("")])];
-        let table = Table::default().rows(rows.clone());
-        assert_eq!(table.rows, rows);
     }
 
     #[test]
     fn column_spacing() {
-        let table = Table::default().column_spacing(2);
+        let table = empty_table([] as [Constraint; 0]).column_spacing(2);
         assert_eq!(table.column_spacing, 2);
     }
 
     #[test]
     fn block() {
         let block = Block::bordered().title("Table");
-        let table = Table::default().block(block.clone());
+        let table = empty_table([] as [Constraint; 0]).block(block.clone());
         assert_eq!(table.block, Some(block));
     }
 
     #[test]
     fn header() {
         let header = Row::new(vec![Cell::from("")]);
-        let table = Table::default().header(header.clone());
+        let table = empty_table([] as [Constraint; 0]).header(header.clone());
         assert_eq!(table.header, Some(header));
     }
 
     #[test]
     fn footer() {
         let footer = Row::new(vec![Cell::from("")]);
-        let table = Table::default().footer(footer.clone());
+        let table = empty_table([] as [Constraint; 0]).footer(footer.clone());
         assert_eq!(table.footer, Some(footer));
     }
 
@@ -1399,150 +1216,44 @@ mod tests {
     #[expect(deprecated)]
     fn highlight_style() {
         let style = Style::default().red().italic();
-        let table = Table::default().highlight_style(style);
+        let table = empty_table([] as [Constraint; 0]).highlight_style(style);
         assert_eq!(table.row_highlight_style, style);
     }
 
     #[test]
     fn row_highlight_style() {
         let style = Style::default().red().italic();
-        let table = Table::default().row_highlight_style(style);
+        let table = empty_table([] as [Constraint; 0]).row_highlight_style(style);
         assert_eq!(table.row_highlight_style, style);
     }
 
     #[test]
-    fn column_highlight_style() {
-        let style = Style::default().red().italic();
-        let table = Table::default().column_highlight_style(style);
-        assert_eq!(table.column_highlight_style, style);
-    }
-
-    #[test]
-    fn cell_highlight_style() {
-        let style = Style::default().red().italic();
-        let table = Table::default().cell_highlight_style(style);
-        assert_eq!(table.cell_highlight_style, style);
-    }
-
-    #[test]
     fn highlight_symbol() {
-        let table = Table::default().highlight_symbol(">>");
+        let table = empty_table([] as [Constraint; 0]).highlight_symbol(">>");
         assert_eq!(table.highlight_symbol, Text::from(">>"));
     }
 
     #[test]
-    fn highlight_spacing() {
-        let table = Table::default().highlight_spacing(HighlightSpacing::Always);
+    fn highlight_spacing_test() {
+        let table = empty_table([] as [Constraint; 0]).highlight_spacing(HighlightSpacing::Always);
         assert_eq!(table.highlight_spacing, HighlightSpacing::Always);
     }
 
     #[test]
     #[should_panic = "Percentages should be between 0 and 100 inclusively"]
     fn table_invalid_percentages() {
-        let _ = Table::default().widths([Constraint::Percentage(110)]);
+        let _ = empty_table([Constraint::Percentage(110)]);
     }
 
     #[test]
     fn widths_conversions() {
         let array = [Constraint::Percentage(100)];
-        let table = Table::new(Vec::<Row>::new(), array);
+        let table = empty_table(array);
         assert_eq!(table.widths, [Constraint::Percentage(100)], "array");
 
-        let array_ref = &[Constraint::Percentage(100)];
-        let table = Table::new(Vec::<Row>::new(), array_ref);
-        assert_eq!(table.widths, [Constraint::Percentage(100)], "array ref");
-
         let vec = vec![Constraint::Percentage(100)];
-        let slice = vec.as_slice();
-        let table = Table::new(Vec::<Row>::new(), slice);
-        assert_eq!(table.widths, [Constraint::Percentage(100)], "slice");
-
-        let vec = vec![Constraint::Percentage(100)];
-        let table = Table::new(Vec::<Row>::new(), vec);
+        let table = empty_table(vec);
         assert_eq!(table.widths, [Constraint::Percentage(100)], "vec");
-
-        let vec_ref = &vec![Constraint::Percentage(100)];
-        let table = Table::new(Vec::<Row>::new(), vec_ref);
-        assert_eq!(table.widths, [Constraint::Percentage(100)], "vec ref");
-    }
-
-    #[cfg(test)]
-    mod state {
-        use ratatui_core::buffer::Buffer;
-        use ratatui_core::layout::{Constraint, Rect};
-        use ratatui_core::widgets::StatefulWidget;
-
-        use super::*;
-        use crate::table::{Row, TableState};
-
-        #[fixture]
-        fn table_buf() -> Buffer {
-            Buffer::empty(Rect::new(0, 0, 10, 10))
-        }
-
-        #[rstest]
-        fn test_list_state_empty_list(mut table_buf: Buffer) {
-            let mut state = TableState::default();
-
-            let rows: Vec<Row> = Vec::new();
-            let widths = vec![Constraint::Percentage(100)];
-            let table = Table::new(rows, widths);
-            state.select_first();
-            StatefulWidget::render(table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected, None);
-            assert_eq!(state.selected_column, None);
-        }
-
-        #[rstest]
-        fn test_list_state_single_item(mut table_buf: Buffer) {
-            let mut state = TableState::default();
-
-            let widths = vec![Constraint::Percentage(100)];
-
-            let items = vec![Row::new(vec!["Item 1"])];
-            let table = Table::new(items, widths);
-            state.select_first();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected, Some(0));
-            assert_eq!(state.selected_column, None);
-
-            state.select_last();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected, Some(0));
-            assert_eq!(state.selected_column, None);
-
-            state.select_previous();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected, Some(0));
-            assert_eq!(state.selected_column, None);
-
-            state.select_next();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected, Some(0));
-            assert_eq!(state.selected_column, None);
-
-            let mut state = TableState::default();
-
-            state.select_first_column();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected_column, Some(0));
-            assert_eq!(state.selected, None);
-
-            state.select_last_column();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected_column, Some(0));
-            assert_eq!(state.selected, None);
-
-            state.select_previous_column();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected_column, Some(0));
-            assert_eq!(state.selected, None);
-
-            state.select_next_column();
-            StatefulWidget::render(&table, table_buf.area, &mut table_buf, &mut state);
-            assert_eq!(state.selected_column, Some(0));
-            assert_eq!(state.selected, None);
-        }
     }
 
     #[cfg(test)]
@@ -1554,16 +1265,18 @@ mod tests {
         #[test]
         fn render_empty_area() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
-            let rows = vec![Row::new(vec!["Cell1", "Cell2"])];
-            let table = Table::new(rows, vec![Constraint::Length(5); 2]);
+            let table = table(
+                vec![Row::new(vec!["Cell1", "Cell2"])],
+                vec![Constraint::Length(5); 2],
+            );
             Widget::render(table, Rect::new(0, 0, 0, 0), &mut buf);
             assert_eq!(buf, Buffer::empty(Rect::new(0, 0, 15, 3)));
         }
 
         #[test]
-        fn render_default() {
+        fn render_empty_table() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
-            let table = Table::default();
+            let table = empty_table([] as [Constraint; 0]);
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             assert_eq!(buf, Buffer::empty(Rect::new(0, 0, 15, 3)));
         }
@@ -1571,12 +1284,14 @@ mod tests {
         #[test]
         fn render_with_block() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]),
-                Row::new(vec!["Cell3", "Cell4"]),
-            ];
-            let block = Block::bordered().title("Block");
-            let table = Table::new(rows, vec![Constraint::Length(5); 2]).block(block);
+            let table = table(
+                vec![
+                    Row::new(vec!["Cell1", "Cell2"]),
+                    Row::new(vec!["Cell3", "Cell4"]),
+                ],
+                vec![Constraint::Length(5); 2],
+            )
+            .block(Block::bordered().title("Block"));
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1629,7 +1344,7 @@ mod tests {
         {
             let mut buf = Buffer::empty(Rect::new(0, 0, width, 2));
             let items = rows.into_iter().collect::<Vec<_>>();
-            let table = Table::new(items, [Constraint::Length(column_width); 2]);
+            let table = table(items, [Constraint::Length(column_width); 2]);
             Widget::render(table, Rect::new(0, 0, width, 2), &mut buf);
             assert_eq!(buf, *expected);
         }
@@ -1679,7 +1394,7 @@ mod tests {
         {
             let mut buf = Buffer::empty(Rect::new(0, 0, width, 2));
             let items = rows.into_iter().collect::<Vec<_>>();
-            let table = Table::new(items, [Constraint::Length(column_width); 3]);
+            let table = table(items, [Constraint::Length(column_width); 3]);
             Widget::render(table, Rect::new(0, 0, width, 2), &mut buf);
             assert_eq!(buf, *expected);
         }
@@ -1688,11 +1403,14 @@ mod tests {
         fn render_with_header() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
             let header = Row::new(vec!["Head1", "Head2"]);
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]),
-                Row::new(vec!["Cell3", "Cell4"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 2]).header(header);
+            let table = table(
+                vec![
+                    Row::new(vec!["Cell1", "Cell2"]),
+                    Row::new(vec!["Cell3", "Cell4"]),
+                ],
+                [Constraint::Length(5); 2],
+            )
+            .header(header);
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1707,11 +1425,14 @@ mod tests {
         fn render_with_footer() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
             let footer = Row::new(vec!["Foot1", "Foot2"]);
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]),
-                Row::new(vec!["Cell3", "Cell4"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 2]).footer(footer);
+            let table = table(
+                vec![
+                    Row::new(vec!["Cell1", "Cell2"]),
+                    Row::new(vec!["Cell3", "Cell4"]),
+                ],
+                [Constraint::Length(5); 2],
+            )
+            .footer(footer);
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1727,10 +1448,12 @@ mod tests {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
             let header = Row::new(vec!["Head1", "Head2"]);
             let footer = Row::new(vec!["Foot1", "Foot2"]);
-            let rows = vec![Row::new(vec!["Cell1", "Cell2"])];
-            let table = Table::new(rows, [Constraint::Length(5); 2])
-                .header(header)
-                .footer(footer);
+            let table = table(
+                vec![Row::new(vec!["Cell1", "Cell2"])],
+                [Constraint::Length(5); 2],
+            )
+            .header(header)
+            .footer(footer);
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1745,11 +1468,14 @@ mod tests {
         fn render_with_header_margin() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
             let header = Row::new(vec!["Head1", "Head2"]).bottom_margin(1);
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]),
-                Row::new(vec!["Cell3", "Cell4"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 2]).header(header);
+            let table = table(
+                vec![
+                    Row::new(vec!["Cell1", "Cell2"]),
+                    Row::new(vec!["Cell3", "Cell4"]),
+                ],
+                [Constraint::Length(5); 2],
+            )
+            .header(header);
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1764,8 +1490,11 @@ mod tests {
         fn render_with_footer_margin() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
             let footer = Row::new(vec!["Foot1", "Foot2"]).top_margin(1);
-            let rows = vec![Row::new(vec!["Cell1", "Cell2"])];
-            let table = Table::new(rows, [Constraint::Length(5); 2]).footer(footer);
+            let table = table(
+                vec![Row::new(vec!["Cell1", "Cell2"])],
+                [Constraint::Length(5); 2],
+            )
+            .footer(footer);
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1779,11 +1508,13 @@ mod tests {
         #[test]
         fn render_with_row_margin() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]).bottom_margin(1),
-                Row::new(vec!["Cell3", "Cell4"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 2]);
+            let table = table(
+                vec![
+                    Row::new(vec!["Cell1", "Cell2"]).bottom_margin(1),
+                    Row::new(vec!["Cell3", "Cell4"]),
+                ],
+                [Constraint::Length(5); 2],
+            );
             Widget::render(table, Rect::new(0, 0, 15, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1797,15 +1528,17 @@ mod tests {
         #[test]
         fn render_with_tall_row() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 23, 3));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]),
-                Row::new(vec![
-                    Text::raw("Cell3-Line1\nCell3-Line2\nCell3-Line3"),
-                    Text::raw("Cell4-Line1\nCell4-Line2\nCell4-Line3"),
-                ])
-                .height(3),
-            ];
-            let table = Table::new(rows, [Constraint::Length(11); 2]);
+            let table = table(
+                vec![
+                    Row::new(vec!["Cell1", "Cell2"]),
+                    Row::new(vec![
+                        Text::raw("Cell3-Line1\nCell3-Line2\nCell3-Line3"),
+                        Text::raw("Cell4-Line1\nCell4-Line2\nCell4-Line3"),
+                    ])
+                    .height(3),
+                ],
+                [Constraint::Length(11); 2],
+            );
             Widget::render(table, Rect::new(0, 0, 23, 3), &mut buf);
             #[rustfmt::skip]
             let expected = Buffer::with_lines([
@@ -1819,12 +1552,14 @@ mod tests {
         #[test]
         fn render_with_alignment() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 10, 3));
-            let rows = vec![
-                Row::new(vec![Line::from("Left").alignment(Alignment::Left)]),
-                Row::new(vec![Line::from("Center").alignment(Alignment::Center)]),
-                Row::new(vec![Line::from("Right").alignment(Alignment::Right)]),
-            ];
-            let table = Table::new(rows, [Percentage(100)]);
+            let table = table(
+                vec![
+                    Row::new(vec![Line::from("Left").alignment(Alignment::Left)]),
+                    Row::new(vec![Line::from("Center").alignment(Alignment::Center)]),
+                    Row::new(vec![Line::from("Right").alignment(Alignment::Right)]),
+                ],
+                [Percentage(100)],
+            );
             Widget::render(table, Rect::new(0, 0, 10, 3), &mut buf);
             let expected = Buffer::with_lines(["Left      ", "  Center  ", "     Right"]);
             assert_eq!(buf, expected);
@@ -1833,34 +1568,26 @@ mod tests {
         #[test]
         fn render_with_overflow_does_not_panic() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
-            let table = Table::new(Vec::<Row>::new(), [Constraint::Min(20); 1])
+            let table = empty_table([Constraint::Min(20); 1])
                 .header(Row::new([Line::from("").alignment(Alignment::Right)]))
                 .footer(Row::new([Line::from("").alignment(Alignment::Right)]));
             Widget::render(table, Rect::new(0, 0, 20, 3), &mut buf);
         }
 
         #[test]
-        fn render_with_selected_column_and_incorrect_width_count_does_not_panic() {
-            let mut buf = Buffer::empty(Rect::new(0, 0, 20, 3));
-            let table = Table::new(
-                vec![Row::new(vec!["Row1", "Row2", "Row3"])],
-                [Constraint::Length(10); 1],
-            );
-            let mut state = TableState::new(1).with_selected_column(2);
-            StatefulWidget::render(table, Rect::new(0, 0, 20, 3), &mut buf, &mut state);
-        }
-
-        #[test]
         fn render_with_selected() {
             let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]),
-                Row::new(vec!["Cell3", "Cell4"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 2])
-                .row_highlight_style(Style::new().red())
-                .highlight_symbol(">>");
-            let mut state = TableState::new(2).with_selected(Some(0));
+            let table = table_with_selection(
+                vec![
+                    Row::new(vec!["Cell1", "Cell2"]),
+                    Row::new(vec!["Cell3", "Cell4"]),
+                ],
+                [Constraint::Length(5); 2],
+                Some(0),
+            )
+            .row_highlight_style(Style::new().red())
+            .highlight_symbol(">>");
+            let mut state = TableState::default();
             StatefulWidget::render(table, Rect::new(0, 0, 15, 3), &mut buf, &mut state);
             let expected = Buffer::with_lines([
                 ">>Cell1 Cell2  ".red(),
@@ -1870,172 +1597,55 @@ mod tests {
             assert_eq!(buf, expected);
         }
 
-        #[test]
-        fn render_with_selected_column() {
-            let mut buf = Buffer::empty(Rect::new(0, 0, 15, 3));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2"]),
-                Row::new(vec!["Cell3", "Cell4"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 2])
-                .column_highlight_style(Style::new().blue())
-                .highlight_symbol(">>");
-            let mut state = TableState::new(2).with_selected_column(Some(1));
-            StatefulWidget::render(table, Rect::new(0, 0, 15, 3), &mut buf, &mut state);
-            let expected = Buffer::with_lines::<[Line; 3]>([
-                Line::from(vec![
-                    "Cell1".into(),
-                    " ".into(),
-                    "Cell2".blue(),
-                    "    ".into(),
-                ]),
-                Line::from(vec![
-                    "Cell3".into(),
-                    " ".into(),
-                    "Cell4".blue(),
-                    "    ".into(),
-                ]),
-                Line::from(vec!["      ".into(), "     ".blue(), "    ".into()]),
-            ]);
-            assert_eq!(buf, expected);
-        }
-
-        #[test]
-        fn render_with_selected_cell() {
-            let mut buf = Buffer::empty(Rect::new(0, 0, 20, 4));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2", "Cell3"]),
-                Row::new(vec!["Cell4", "Cell5", "Cell6"]),
-                Row::new(vec!["Cell7", "Cell8", "Cell9"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 3])
-                .highlight_symbol(">>")
-                .cell_highlight_style(Style::new().green());
-            let mut state = TableState::new(3).with_selected_cell((1, 2));
-            StatefulWidget::render(table, Rect::new(0, 0, 20, 4), &mut buf, &mut state);
-            let expected = Buffer::with_lines::<[Line; 4]>([
-                Line::from(vec!["  Cell1 ".into(), "Cell2 ".into(), "Cell3".into()]),
-                Line::from(vec![">>Cell4 Cell5 ".into(), "Cell6".green(), " ".into()]),
-                Line::from(vec!["  Cell7 ".into(), "Cell8 ".into(), "Cell9".into()]),
-                Line::from(vec!["                    ".into()]),
-            ]);
-            assert_eq!(buf, expected);
-        }
-
-        #[test]
-        fn render_with_selected_row_and_column() {
-            let mut buf = Buffer::empty(Rect::new(0, 0, 20, 4));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2", "Cell3"]),
-                Row::new(vec!["Cell4", "Cell5", "Cell6"]),
-                Row::new(vec!["Cell7", "Cell8", "Cell9"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 3])
-                .highlight_symbol(">>")
-                .row_highlight_style(Style::new().red())
-                .column_highlight_style(Style::new().blue());
-            let mut state = TableState::new(3).with_selected(1).with_selected_column(2);
-            StatefulWidget::render(table, Rect::new(0, 0, 20, 4), &mut buf, &mut state);
-            let expected = Buffer::with_lines::<[Line; 4]>([
-                Line::from(vec!["  Cell1 ".into(), "Cell2 ".into(), "Cell3".blue()]),
-                Line::from(vec![">>Cell4 Cell5 ".red(), "Cell6".blue(), " ".red()]),
-                Line::from(vec!["  Cell7 ".into(), "Cell8 ".into(), "Cell9".blue()]),
-                Line::from(vec!["              ".into(), "     ".blue(), " ".into()]),
-            ]);
-            assert_eq!(buf, expected);
-        }
-
-        #[test]
-        fn render_with_selected_row_and_column_and_cell() {
-            let mut buf = Buffer::empty(Rect::new(0, 0, 20, 4));
-            let rows = vec![
-                Row::new(vec!["Cell1", "Cell2", "Cell3"]),
-                Row::new(vec!["Cell4", "Cell5", "Cell6"]),
-                Row::new(vec!["Cell7", "Cell8", "Cell9"]),
-            ];
-            let table = Table::new(rows, [Constraint::Length(5); 3])
-                .highlight_symbol(">>")
-                .row_highlight_style(Style::new().red())
-                .column_highlight_style(Style::new().blue())
-                .cell_highlight_style(Style::new().green());
-            let mut state = TableState::new(3).with_selected(1).with_selected_column(2);
-            StatefulWidget::render(table, Rect::new(0, 0, 20, 4), &mut buf, &mut state);
-            let expected = Buffer::with_lines::<[Line; 4]>([
-                Line::from(vec!["  Cell1 ".into(), "Cell2 ".into(), "Cell3".blue()]),
-                Line::from(vec![">>Cell4 Cell5 ".red(), "Cell6".green(), " ".red()]),
-                Line::from(vec!["  Cell7 ".into(), "Cell8 ".into(), "Cell9".blue()]),
-                Line::from(vec!["              ".into(), "     ".blue(), " ".into()]),
-            ]);
-            assert_eq!(buf, expected);
-        }
-
-        /// Note that this includes a regression test for a bug where the table would not render the
-        /// correct rows when there is no selection.
-        /// <https://github.com/ratatui/ratatui/issues/1179>
         #[rstest]
         #[case::no_selection(None, 50, ["50", "51", "52", "53", "54"])]
-        #[case::selection_before_offset(20, 20, ["20", "21", "22", "23", "24"])]
-        #[case::selection_immediately_before_offset(49, 49, ["49", "50", "51", "52", "53"])]
-        #[case::selection_at_start_of_offset(50, 50, ["50", "51", "52", "53", "54"])]
-        #[case::selection_at_end_of_offset(54, 50, ["50", "51", "52", "53", "54"])]
-        #[case::selection_immediately_after_offset(55, 51, ["51", "52", "53", "54", "55"])]
-        #[case::selection_after_offset(80, 76, ["76", "77", "78", "79", "80"])]
-        fn render_with_selection_and_offset<T: Into<Option<usize>>>(
-            #[case] selected_row: T,
+        #[case::selection_before_offset(Some(20), 20, ["20", "21", "22", "23", "24"])]
+        #[case::selection_immediately_before_offset(Some(49), 49, ["49", "50", "51", "52", "53"])]
+        #[case::selection_at_start_of_offset(Some(50), 50, ["50", "51", "52", "53", "54"])]
+        #[case::selection_at_end_of_offset(Some(54), 50, ["50", "51", "52", "53", "54"])]
+        #[case::selection_immediately_after_offset(Some(55), 51, ["51", "52", "53", "54", "55"])]
+        #[case::selection_after_offset(Some(80), 76, ["76", "77", "78", "79", "80"])]
+        fn render_with_selection_and_offset(
+            #[case] selected_row: Option<usize>,
             #[case] expected_offset: usize,
             #[case] expected_items: [&str; 5],
         ) {
-            // render 100 rows offset at 50, with a selected row
-            let rows = (0..100).map(|i| Row::new([i.to_string()]));
-            let items = rows.into_iter().collect::<Vec<_>>();
-            let num_items = items.len();
-            let table = Table::new(items, [Constraint::Length(2)]);
+            let items: Vec<Row> = (0..100i32).map(|i| Row::new([i.to_string()])).collect();
+            let table = table_with_selection(items, [Constraint::Length(2)], selected_row);
             let mut buf = Buffer::empty(Rect::new(0, 0, 2, 5));
-            let mut state = TableState::new(num_items)
-                .with_offset(50)
-                .with_selected(selected_row.into());
+            let mut state = TableState::default().with_offset(50);
 
-            StatefulWidget::render(table.clone(), Rect::new(0, 0, 5, 5), &mut buf, &mut state);
+            StatefulWidget::render(table, Rect::new(0, 0, 5, 5), &mut buf, &mut state);
 
             assert_eq!(buf, Buffer::with_lines(expected_items));
             assert_eq!(state.offset, expected_offset);
         }
     }
 
-    // test how constraints interact with table column width allocation
     mod column_widths {
         use super::*;
 
         #[test]
         fn length_constraint() {
-            // without selection, more than needed width
-            let table = Table::default().widths([Length(4), Length(4)]);
+            let table = empty_table([Length(4), Length(4)]);
             assert_eq!(
                 table.get_column_widths(20, 0, 0),
                 [Rect::new(0, 0, 4, 1), Rect::new(5, 0, 4, 1),]
             );
 
-            // with selection, more than needed width
-            let table = Table::default().widths([Length(4), Length(4)]);
+            let table = empty_table([Length(4), Length(4)]);
             assert_eq!(
                 table.get_column_widths(20, 3, 0),
                 [Rect::new(3, 0, 4, 1), Rect::new(8, 0, 4, 1)]
             );
 
-            // without selection, less than needed width
-            let table = Table::default().widths([Length(4), Length(4)]);
+            let table = empty_table([Length(4), Length(4)]);
             assert_eq!(
                 table.get_column_widths(7, 0, 0),
                 [Rect::new(0, 0, 3, 1), Rect::new(4, 0, 3, 1)]
             );
 
-            // with selection, less than needed width
-            // <--------7px-------->
-            // ┌────────┐x┌────────┐
-            // │ (3, 2) │x│ (6, 1) │
-            // └────────┘x└────────┘
-            // column spacing (i.e. `x`) is always prioritized
-            let table = Table::default().widths([Length(4), Length(4)]);
+            let table = empty_table([Length(4), Length(4)]);
             assert_eq!(
                 table.get_column_widths(7, 3, 0),
                 [Rect::new(3, 0, 2, 1), Rect::new(6, 0, 1, 1)]
@@ -2044,29 +1654,25 @@ mod tests {
 
         #[test]
         fn max_constraint() {
-            // without selection, more than needed width
-            let table = Table::default().widths([Max(4), Max(4)]);
+            let table = empty_table([Max(4), Max(4)]);
             assert_eq!(
                 table.get_column_widths(20, 0, 0),
                 [Rect::new(0, 0, 4, 1), Rect::new(5, 0, 4, 1)]
             );
 
-            // with selection, more than needed width
-            let table = Table::default().widths([Max(4), Max(4)]);
+            let table = empty_table([Max(4), Max(4)]);
             assert_eq!(
                 table.get_column_widths(20, 3, 0),
                 [Rect::new(3, 0, 4, 1), Rect::new(8, 0, 4, 1)]
             );
 
-            // without selection, less than needed width
-            let table = Table::default().widths([Max(4), Max(4)]);
+            let table = empty_table([Max(4), Max(4)]);
             assert_eq!(
                 table.get_column_widths(7, 0, 0),
                 [Rect::new(0, 0, 3, 1), Rect::new(4, 0, 3, 1)]
             );
 
-            // with selection, less than needed width
-            let table = Table::default().widths([Max(4), Max(4)]);
+            let table = empty_table([Max(4), Max(4)]);
             assert_eq!(
                 table.get_column_widths(7, 3, 0),
                 [Rect::new(3, 0, 2, 1), Rect::new(6, 0, 1, 1)]
@@ -2075,35 +1681,25 @@ mod tests {
 
         #[test]
         fn min_constraint() {
-            // in its currently stage, the "Min" constraint does not grow to use the possible
-            // available length and enabling "expand_to_fill" will just stretch the last
-            // constraint and not split it with all available constraints
-
-            // without selection, more than needed width
-            let table = Table::default().widths([Min(4), Min(4)]);
+            let table = empty_table([Min(4), Min(4)]);
             assert_eq!(
                 table.get_column_widths(20, 0, 0),
                 [Rect::new(0, 0, 10, 1), Rect::new(11, 0, 9, 1)]
             );
 
-            // with selection, more than needed width
-            let table = Table::default().widths([Min(4), Min(4)]);
+            let table = empty_table([Min(4), Min(4)]);
             assert_eq!(
                 table.get_column_widths(20, 3, 0),
                 [Rect::new(3, 0, 8, 1), Rect::new(12, 0, 8, 1)]
             );
 
-            // without selection, less than needed width
-            // allocates spacer
-            let table = Table::default().widths([Min(4), Min(4)]);
+            let table = empty_table([Min(4), Min(4)]);
             assert_eq!(
                 table.get_column_widths(7, 0, 0),
                 [Rect::new(0, 0, 3, 1), Rect::new(4, 0, 3, 1)]
             );
 
-            // with selection, less than needed width
-            // always allocates selection and spacer
-            let table = Table::default().widths([Min(4), Min(4)]);
+            let table = empty_table([Min(4), Min(4)]);
             assert_eq!(
                 table.get_column_widths(7, 3, 0),
                 [Rect::new(3, 0, 2, 1), Rect::new(6, 0, 1, 1)]
@@ -2112,31 +1708,25 @@ mod tests {
 
         #[test]
         fn percentage_constraint() {
-            // without selection, more than needed width
-            let table = Table::default().widths([Percentage(30), Percentage(30)]);
+            let table = empty_table([Percentage(30), Percentage(30)]);
             assert_eq!(
                 table.get_column_widths(20, 0, 0),
                 [Rect::new(0, 0, 6, 1), Rect::new(7, 0, 6, 1)]
             );
 
-            // with selection, more than needed width
-            let table = Table::default().widths([Percentage(30), Percentage(30)]);
+            let table = empty_table([Percentage(30), Percentage(30)]);
             assert_eq!(
                 table.get_column_widths(20, 3, 0),
                 [Rect::new(3, 0, 5, 1), Rect::new(9, 0, 5, 1)]
             );
 
-            // without selection, less than needed width
-            // rounds from positions: [0.0, 0.0, 2.1, 3.1, 5.2, 7.0]
-            let table = Table::default().widths([Percentage(30), Percentage(30)]);
+            let table = empty_table([Percentage(30), Percentage(30)]);
             assert_eq!(
                 table.get_column_widths(7, 0, 0),
                 [Rect::new(0, 0, 2, 1), Rect::new(3, 0, 2, 1)]
             );
 
-            // with selection, less than needed width
-            // rounds from positions: [0.0, 3.0, 5.1, 6.1, 7.0, 7.0]
-            let table = Table::default().widths([Percentage(30), Percentage(30)]);
+            let table = empty_table([Percentage(30), Percentage(30)]);
             assert_eq!(
                 table.get_column_widths(7, 3, 0),
                 [Rect::new(3, 0, 1, 1), Rect::new(5, 0, 1, 1)]
@@ -2145,43 +1735,34 @@ mod tests {
 
         #[test]
         fn ratio_constraint() {
-            // without selection, more than needed width
-            // rounds from positions: [0.00, 0.00, 6.67, 7.67, 14.33]
-            let table = Table::default().widths([Ratio(1, 3), Ratio(1, 3)]);
+            let table = empty_table([Ratio(1, 3), Ratio(1, 3)]);
             assert_eq!(
                 table.get_column_widths(20, 0, 0),
                 [Rect::new(0, 0, 7, 1), Rect::new(8, 0, 6, 1)]
             );
 
-            // with selection, more than needed width
-            // rounds from positions: [0.00, 3.00, 10.67, 17.33, 20.00]
-            let table = Table::default().widths([Ratio(1, 3), Ratio(1, 3)]);
+            let table = empty_table([Ratio(1, 3), Ratio(1, 3)]);
             assert_eq!(
                 table.get_column_widths(20, 3, 0),
                 [Rect::new(3, 0, 6, 1), Rect::new(10, 0, 5, 1)]
             );
 
-            // without selection, less than needed width
-            // rounds from positions: [0.00, 2.33, 3.33, 5.66, 7.00]
-            let table = Table::default().widths([Ratio(1, 3), Ratio(1, 3)]);
+            let table = empty_table([Ratio(1, 3), Ratio(1, 3)]);
             assert_eq!(
                 table.get_column_widths(7, 0, 0),
                 [Rect::new(0, 0, 2, 1), Rect::new(3, 0, 3, 1)]
             );
 
-            // with selection, less than needed width
-            // rounds from positions: [0.00, 3.00, 5.33, 6.33, 7.00, 7.00]
-            let table = Table::default().widths([Ratio(1, 3), Ratio(1, 3)]);
+            let table = empty_table([Ratio(1, 3), Ratio(1, 3)]);
             assert_eq!(
                 table.get_column_widths(7, 3, 0),
                 [Rect::new(3, 0, 1, 1), Rect::new(5, 0, 2, 1)]
             );
         }
 
-        /// When more width is available than requested, the behavior is controlled by flex
         #[test]
         fn underconstrained_flex() {
-            let table = Table::default().widths([Min(10), Min(10), Min(1)]);
+            let table = empty_table([Min(10), Min(10), Min(1)]);
             assert_eq!(
                 table.get_column_widths(62, 0, 0),
                 &[
@@ -2191,9 +1772,7 @@ mod tests {
                 ]
             );
 
-            let table = Table::default()
-                .widths([Min(10), Min(10), Min(1)])
-                .flex(Flex::Legacy);
+            let table = empty_table([Min(10), Min(10), Min(1)]).flex(Flex::Legacy);
             assert_eq!(
                 table.get_column_widths(62, 0, 0),
                 &[
@@ -2203,9 +1782,7 @@ mod tests {
                 ]
             );
 
-            let table = Table::default()
-                .widths([Min(10), Min(10), Min(1)])
-                .flex(Flex::SpaceBetween);
+            let table = empty_table([Min(10), Min(10), Min(1)]).flex(Flex::SpaceBetween);
             assert_eq!(
                 table.get_column_widths(62, 0, 0),
                 &[
@@ -2218,7 +1795,7 @@ mod tests {
 
         #[test]
         fn underconstrained_segment_size() {
-            let table = Table::default().widths([Min(10), Min(10), Min(1)]);
+            let table = empty_table([Min(10), Min(10), Min(1)]);
             assert_eq!(
                 table.get_column_widths(62, 0, 0),
                 &[
@@ -2228,9 +1805,7 @@ mod tests {
                 ]
             );
 
-            let table = Table::default()
-                .widths([Min(10), Min(10), Min(1)])
-                .flex(Flex::Legacy);
+            let table = empty_table([Min(10), Min(10), Min(1)]).flex(Flex::Legacy);
             assert_eq!(
                 table.get_column_widths(62, 0, 0),
                 &[
@@ -2243,15 +1818,13 @@ mod tests {
 
         #[test]
         fn no_constraint_with_rows() {
-            let table = Table::default()
-                .rows(vec![
-                    Row::new(vec!["a", "b"]),
-                    Row::new(vec!["c", "d", "e"]),
-                ])
-                // rows should get precedence over header
-                .header(Row::new(vec!["f", "g"]))
-                .footer(Row::new(vec!["h", "i"]))
-                .column_spacing(0);
+            let table = table(
+                vec![Row::new(vec!["a", "b"]), Row::new(vec!["c", "d", "e"])],
+                [] as [Constraint; 0],
+            )
+            .header(Row::new(vec!["f", "g"]))
+            .footer(Row::new(vec!["h", "i"]))
+            .column_spacing(0);
             assert_eq!(
                 table.get_column_widths(30, 0, 3),
                 &[
@@ -2264,8 +1837,7 @@ mod tests {
 
         #[test]
         fn no_constraint_with_header() {
-            let table = Table::default()
-                .rows(vec![])
+            let table = empty_table([] as [Constraint; 0])
                 .header(Row::new(vec!["f", "g"]))
                 .column_spacing(0);
             assert_eq!(
@@ -2276,8 +1848,7 @@ mod tests {
 
         #[test]
         fn no_constraint_with_footer() {
-            let table = Table::default()
-                .rows(vec![])
+            let table = empty_table([] as [Constraint; 0])
                 .footer(Row::new(vec!["h", "i"]))
                 .column_spacing(0);
             assert_eq!(
@@ -2297,14 +1868,14 @@ mod tests {
             Lines: IntoIterator,
             Lines::Item: Into<Line<'line>>,
         {
-            let table = Table::default()
-                .rows(vec![Row::new(vec!["ABCDE", "12345"])])
+            let rows = vec![Row::new(vec!["ABCDE", "12345"])];
+            let table = table_with_selection(rows, [] as [Constraint; 0], selection)
                 .highlight_spacing(highlight_spacing)
                 .highlight_symbol(">>>")
                 .column_spacing(spacing);
             let area = Rect::new(0, 0, columns, 3);
             let mut buf = Buffer::empty(area);
-            let mut state = TableState::default().with_selected(selection);
+            let mut state = TableState::default();
             StatefulWidget::render(table, area, &mut buf, &mut state);
             assert_eq!(buf, Buffer::with_lines(expected));
         }
@@ -2326,19 +1897,16 @@ mod tests {
                 ],
             );
 
-            let table = Table::default()
-                .rows(vec![Row::new(vec!["ABCDE", "12345"])])
-                .widths([5, 5])
-                .column_spacing(0);
+            let table = table(
+                vec![Row::new(vec!["ABCDE", "12345"])],
+                [Constraint::Length(5), Constraint::Length(5)],
+            )
+            .column_spacing(0);
             let area = Rect::new(0, 0, 15, 3);
             let mut buf = Buffer::empty(area);
             Widget::render(table, area, &mut buf);
-            let expected = Buffer::with_lines([
-                "ABCDE12345     ", /* As reference, this is what happens when you manually
-                                    * specify widths */
-                "               ", // row 2
-                "               ", // row 3
-            ]);
+            let expected =
+                Buffer::with_lines(["ABCDE12345     ", "               ", "               "]);
             assert_eq!(buf, expected);
 
             // no highlight_symbol rendered ever
@@ -2488,41 +2056,47 @@ mod tests {
                 ],
             );
 
-            let table = Table::default()
-                .rows(vec![Row::new(vec!["ABCDE", "12345"])])
+            {
+                let t = table(
+                    vec![Row::new(vec!["ABCDE", "12345"])],
+                    [] as [Constraint; 0],
+                )
                 .highlight_spacing(HighlightSpacing::Always)
                 .flex(Flex::Legacy)
                 .highlight_symbol(">>>")
                 .column_spacing(1);
-            let area = Rect::new(0, 0, 10, 3);
-            let mut buf = Buffer::empty(area);
-            Widget::render(table, area, &mut buf);
-            // highlight_symbol and spacing are prioritized but columns are evenly distributed
-            #[rustfmt::skip]
-            let expected = Buffer::with_lines([
-                "   ABCDE 1",
-                "          ",
-                "          ",
-            ]);
-            assert_eq!(buf, expected);
+                let area = Rect::new(0, 0, 10, 3);
+                let mut buf = Buffer::empty(area);
+                Widget::render(t, area, &mut buf);
+                #[rustfmt::skip]
+                let expected = Buffer::with_lines([
+                    "   ABCDE 1",
+                    "          ",
+                    "          ",
+                ]);
+                assert_eq!(buf, expected);
+            }
 
-            let table = Table::default()
-                .rows(vec![Row::new(vec!["ABCDE", "12345"])])
+            {
+                let t = table(
+                    vec![Row::new(vec!["ABCDE", "12345"])],
+                    [] as [Constraint; 0],
+                )
                 .highlight_spacing(HighlightSpacing::Always)
                 .flex(Flex::Start)
                 .highlight_symbol(">>>")
                 .column_spacing(1);
-            let area = Rect::new(0, 0, 10, 3);
-            let mut buf = Buffer::empty(area);
-            Widget::render(table, area, &mut buf);
-            // highlight_symbol and spacing are prioritized but columns are evenly distributed
-            #[rustfmt::skip]
-            let expected = Buffer::with_lines([
-                "   ABC 123",
-                "          ",
-                "          ",
-            ]);
-            assert_eq!(buf, expected);
+                let area = Rect::new(0, 0, 10, 3);
+                let mut buf = Buffer::empty(area);
+                Widget::render(t, area, &mut buf);
+                #[rustfmt::skip]
+                let expected = Buffer::with_lines([
+                    "   ABC 123",
+                    "          ",
+                    "          ",
+                ]);
+                assert_eq!(buf, expected);
+            }
 
             test_table_with_selection(
                 HighlightSpacing::Never,
@@ -2639,7 +2213,7 @@ mod tests {
     #[test]
     fn stylize() {
         assert_eq!(
-            Table::new(vec![Row::new(vec![Cell::from("")])], [Percentage(100)])
+            table(vec![Row::new(vec![Cell::from("")])], [Percentage(100)])
                 .black()
                 .on_white()
                 .bold()
@@ -2682,34 +2256,35 @@ mod tests {
         4
     )]
 
-    fn column_count(
+    fn column_count_test(
         #[case] header: Vec<&str>,
         #[case] rows: Vec<Vec<&str>>,
         #[case] footer: Vec<&str>,
         #[case] expected: usize,
     ) {
-        let header = Row::new(header);
-        let footer = Row::new(footer);
-
         let items: Vec<Row> = rows.into_iter().map(Row::new).collect();
-        let table = Table::new(items, Vec::<Constraint>::new())
-            .header(header)
-            .footer(footer);
-        let column_count = table.column_count();
-        assert_eq!(column_count, expected);
+        let mut table = table(items, [] as [Constraint; 0]);
+        if !header.is_empty() {
+            table = table.header(Row::new(header));
+        }
+        if !footer.is_empty() {
+            table = table.footer(Row::new(footer));
+        }
+        assert_eq!(table.column_count(), expected);
     }
 
     #[test]
     fn render_in_minimal_buffer() {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 1, 1));
-        let rows = vec![
-            Row::new(vec!["Cell1", "Cell2", "Cell3"]),
-            Row::new(vec!["Cell4", "Cell5", "Cell6"]),
-        ];
-        let table = Table::new(rows, [Constraint::Length(10); 3])
-            .header(Row::new(vec!["Header1", "Header2", "Header3"]))
-            .footer(Row::new(vec!["Footer1", "Footer2", "Footer3"]));
-        // This should not panic, even if the buffer is too small to render the table.
+        let table = table(
+            vec![
+                Row::new(vec!["Cell1", "Cell2", "Cell3"]),
+                Row::new(vec!["Cell4", "Cell5", "Cell6"]),
+            ],
+            [Constraint::Length(10); 3],
+        )
+        .header(Row::new(vec!["Header1", "Header2", "Header3"]))
+        .footer(Row::new(vec!["Footer1", "Footer2", "Footer3"]));
         Widget::render(table, buffer.area, &mut buffer);
         assert_eq!(buffer, Buffer::with_lines([" "]));
     }
@@ -2717,28 +2292,29 @@ mod tests {
     #[test]
     fn render_in_zero_size_buffer() {
         let mut buffer = Buffer::empty(Rect::ZERO);
-        let rows = vec![
-            Row::new(vec!["Cell1", "Cell2", "Cell3"]),
-            Row::new(vec!["Cell4", "Cell5", "Cell6"]),
-        ];
-        let table = Table::new(rows, [Constraint::Length(10); 3])
-            .header(Row::new(vec!["Header1", "Header2", "Header3"]))
-            .footer(Row::new(vec!["Footer1", "Footer2", "Footer3"]));
-        // This should not panic, even if the buffer has zero size.
+        let table = table(
+            vec![
+                Row::new(vec!["Cell1", "Cell2", "Cell3"]),
+                Row::new(vec!["Cell4", "Cell5", "Cell6"]),
+            ],
+            [Constraint::Length(10); 3],
+        )
+        .header(Row::new(vec!["Header1", "Header2", "Header3"]))
+        .footer(Row::new(vec!["Footer1", "Footer2", "Footer3"]));
         Widget::render(table, buffer.area, &mut buffer);
     }
 
     #[test]
     fn get_area_for_column_span_one_no_more_columns() {
         let columns = [];
-        let column_span = Table::get_cell_area(&mut columns.iter(), 1, 1);
+        let column_span = Table::<Row, Vec<Row>>::get_cell_area(&mut columns.iter(), 1, 1);
         assert!(column_span.is_none());
     }
 
     #[test]
     fn get_area_for_column_span_two_no_more_columns() {
         let columns = [];
-        let column_span = Table::get_cell_area(&mut columns.iter(), 2, 1);
+        let column_span = Table::<Row, Vec<Row>>::get_cell_area(&mut columns.iter(), 2, 1);
         assert!(column_span.is_none());
     }
 
@@ -2765,7 +2341,8 @@ mod tests {
         #[case] column_span: u16,
         #[case] expected_column_width: u16,
     ) {
-        let column_span = Table::get_cell_area(&mut columns.iter(), column_span, 1);
+        let column_span =
+            Table::<Row, Vec<Row>>::get_cell_area(&mut columns.iter(), column_span, 1);
         assert!(column_span.is_some());
         assert_eq!(column_span.unwrap().width, expected_column_width);
     }
@@ -2778,7 +2355,8 @@ mod tests {
         #[case] column_span: u16,
         #[case] expected_column_width: u16,
     ) {
-        let column_span = Table::get_cell_area(&mut columns.iter(), column_span, 2);
+        let column_span =
+            Table::<Row, Vec<Row>>::get_cell_area(&mut columns.iter(), column_span, 2);
         assert!(column_span.is_some());
         assert_eq!(column_span.unwrap().width, expected_column_width);
     }
@@ -2857,14 +2435,13 @@ mod tests {
         Lines: IntoIterator,
         Lines::Item: Into<Line<'line>>,
     {
-        let table = Table::default()
-            .rows(vec![Row::new(cells)])
+        let table = table_with_selection(vec![Row::new(cells)], [] as [Constraint; 0], selection)
             .highlight_spacing(highlight_spacing)
             .highlight_symbol(">>>")
             .column_spacing(spacing);
         let area = Rect::new(0, 0, columns, 3);
         let mut buf = Buffer::empty(area);
-        let mut state = TableState::default().with_selected(selection);
+        let mut state = TableState::default();
         StatefulWidget::render(table, area, &mut buf, &mut state);
         assert_eq!(buf, Buffer::with_lines(expected));
     }

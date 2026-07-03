@@ -38,6 +38,8 @@
 ///     }
 /// }
 /// ```
+use core::borrow;
+
 macro_rules! impl_as_ref {
     ($type:ty, <$($gen:tt),+> $(where $($bounds:tt)+)?) => {
         impl<$($gen),+> AsRef<$type> for $type $(where $($bounds)+)? {
@@ -62,13 +64,13 @@ impl_as_ref!(crate::chart::Chart<'a>, <'a>);
 impl_as_ref!(crate::clear::Clear);
 impl_as_ref!(crate::gauge::Gauge<'a>, <'a>);
 impl_as_ref!(crate::gauge::LineGauge<'a>, <'a>);
-impl_as_ref!(crate::list::List<'a, Item, Message>, <'a, Item, Message> where Item: Clone + Into<crate::list::ListItem<'a>>);
+impl_as_ref!(crate::list::List<'a, Item, Items, Message>, <'a, Item, Items, Message> where Items: borrow::Borrow<[Item]> + 'a, Item: PartialEq);
 impl_as_ref!(crate::logo::RatatuiLogo);
 impl_as_ref!(crate::mascot::RatatuiMascot);
 impl_as_ref!(crate::paragraph::Paragraph<'a>, <'a>);
 impl_as_ref!(crate::scrollbar::Scrollbar<'a>, <'a>);
 impl_as_ref!(crate::sparkline::Sparkline<'a>, <'a>);
-impl_as_ref!(crate::table::Table<'a>, <'a>);
+impl_as_ref!(crate::table::Table<'a, Item, Items, Message>, <'a, Item, Items, Message> where Items: borrow::Borrow<[Item]> + 'a, Item: PartialEq);
 impl_as_ref!(crate::tabs::Tabs<'a>, <'a>);
 #[cfg(feature = "calendar")]
 impl_as_ref!(
@@ -79,6 +81,7 @@ impl_as_ref!(
 #[cfg(test)]
 mod tests {
     use alloc::vec;
+    use alloc::vec::Vec;
 
     #[test]
     fn widgets_implement_as_ref() {
@@ -89,13 +92,24 @@ mod tests {
         let _ = crate::clear::Clear.as_ref();
         let _ = crate::gauge::Gauge::default().as_ref();
         let _ = crate::gauge::LineGauge::default().as_ref();
-        let _ = crate::list::List::<_>::new(["foo"]).as_ref();
+        let _ = crate::list::List::new(
+            vec![crate::list::ListItem::new("foo")],
+            None::<&crate::list::ListItem>,
+            |_| (),
+        )
+        .as_ref();
         let _ = crate::logo::RatatuiLogo::default().as_ref();
         let _ = crate::mascot::RatatuiMascot::default().as_ref();
         let _ = crate::paragraph::Paragraph::new("").as_ref();
         let _ = crate::scrollbar::Scrollbar::default().as_ref();
         let _ = crate::sparkline::Sparkline::default().as_ref();
-        let _ = crate::table::Table::default().as_ref();
+        let _ = crate::table::Table::new(
+            Vec::<crate::table::Row>::new(),
+            [] as [ratatui_core::layout::Constraint; 0],
+            None::<&crate::table::Row>,
+            |_| (),
+        )
+        .as_ref();
         let _ = crate::tabs::Tabs::default().as_ref();
     }
 

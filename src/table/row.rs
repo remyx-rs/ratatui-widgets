@@ -263,6 +263,12 @@ impl Styled for Row<'_> {
     }
 }
 
+impl<'a> From<&Row<'a>> for Row<'a> {
+    fn from(row: &Row<'a>) -> Self {
+        row.clone()
+    }
+}
+
 impl<'a, Item> FromIterator<Item> for Row<'a>
 where
     Item: Into<Cell<'a>>,
