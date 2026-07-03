@@ -4,11 +4,9 @@
 //! whether they currently have input focus. Implementations are provided for
 //! [`List`] and [`Table`].
 
-use crate::{
-    list::{List, ListItem},
-    paragraph::Paragraph,
-    table::{Row, Table},
-};
+use core::borrow::Borrow;
+
+use crate::{list::List, paragraph::Paragraph, table::Table};
 
 /// A widget that can receive and report input focus.
 pub trait Focusable {
@@ -19,9 +17,10 @@ pub trait Focusable {
     fn is_focused(&self) -> bool;
 }
 
-impl<'a, Item, Message> Focusable for List<'a, Item, Message>
+impl<'a, Item, Items, Message> Focusable for List<'a, Item, Items, Message>
 where
-    Item: Clone + Into<ListItem<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
 {
     fn focus(mut self, focus: bool) -> Self {
         self.focus = focus;
@@ -33,9 +32,10 @@ where
     }
 }
 
-impl<'a, Item, Message> Focusable for Table<'a, Item, Message>
+impl<'a, Item, Items, Message> Focusable for Table<'a, Item, Items, Message>
 where
-    Item: Clone + Into<Row<'a>>,
+    Items: Borrow<[Item]> + 'a,
+    Item: PartialEq,
 {
     fn focus(mut self, focus: bool) -> Self {
         self.focus = focus;

@@ -216,6 +216,12 @@ where
     }
 }
 
+impl<'a> From<&ListItem<'a>> for ListItem<'a> {
+    fn from(item: &ListItem<'a>) -> Self {
+        item.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::borrow::Cow;
