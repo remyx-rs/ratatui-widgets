@@ -837,7 +837,7 @@ where
             return;
         }
 
-        let (start_index, end_index) = self.visible_rows(selected, state, area);
+        let (start_index, end_index) = self.visible_rows(state, area);
         state.offset = start_index;
 
         let mut y_offset = 0;
@@ -870,19 +870,10 @@ where
     /// - if the selected row is not visible, scroll the table to ensure it is visible.
     /// - if there is still space to fill then there's a partial row at the end which should be
     ///   included in the view.
-    fn visible_rows(
-        &self,
-        selected: Option<usize>,
-        state: &TableState,
-        area: Rect,
-    ) -> (usize, usize) {
+    fn visible_rows(&self, state: &TableState, area: Rect) -> (usize, usize) {
         let items_len = self.items.borrow().len();
         let last_row = items_len.saturating_sub(1);
-        let mut start = state.offset.min(last_row);
-
-        if let Some(selected) = selected {
-            start = start.min(selected);
-        }
+        let start = state.offset.min(last_row);
 
         let mut end = start;
         let mut height = 0;
@@ -894,19 +885,6 @@ where
             }
             height += row.height_with_margin();
             end += 1;
-        }
-
-        if let Some(selected) = selected {
-            let selected = selected.min(last_row);
-
-            while selected >= end {
-                height = height.saturating_add(self.row_at(end).height_with_margin());
-                end += 1;
-                while height > area.height {
-                    height = height.saturating_sub(self.row_at(start).height_with_margin());
-                    start += 1;
-                }
-            }
         }
 
         if height < area.height && end < items_len {
